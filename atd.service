@@ -1,0 +1,12 @@
+[Unit]
+Description=at job daemon (Go)
+
+[Service]
+ExecStart=%h/.local/bin/atd
+Restart=on-failure
+# let running jobs finish on stop
+KillMode=mixed
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=default.target

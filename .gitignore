@@ -1,1 +1,4 @@
 at-go
+# the C tree's root .gitignore ignores these (they are generated there); ours are source files
+!Makefile
+!atd.service
