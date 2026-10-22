@@ -339,6 +339,9 @@ func (p *parser) parseOffsets(sign int) error {
 				if err != nil {
 					return err
 				}
+				if m > 59 || s > 59 {
+					return fmt.Errorf("bad duration %q: minutes and seconds must be below 60", t.s)
+				}
 				p.offs = append(p.offs, offset{sign * h, "h"}, offset{sign * m, "m"}, offset{sign * s, "s"})
 				p.i++
 				got++

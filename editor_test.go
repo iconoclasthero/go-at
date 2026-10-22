@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func readOne(t *testing.T, input string) string {
@@ -101,6 +103,97 @@ func TestLongLineScrolls(t *testing.T) {
 	for _, chunk := range strings.Split(out.String(), "\r") {
 		if i := strings.Index(chunk, "\x1b[K"); i >= 0 && len([]rune(chunk[:i])) > 20 {
 			t.Fatalf("redraw wider than terminal: %q", chunk)
+		}
+	}
+}
+
+// An arrow key delivered in several separate reads (slow ssh link, odd
+// terminal, tmux) must still be one Left, not ESC + literal "[D".
+func TestSplitEscapeSequence(t *testing.T) {
+	for _, parts := range [][]string{
+		{"abc", "\x1b", "[", "D", "X\r"},
+		{"abc", "\x1b[", "D", "X\r"},
+		{"abc", "\x1b", "[D", "X\r"},
+		{"abc", "\x1bO", "D", "X\r"},
+		{"abc", "\x1b", "[", "1;5", "D", "X\r"}, // ctrl-left, split inside the parameters
+	} {
+		pr, pw := io.Pipe()
+		e := NewEditor(pr, io.Discard, nil)
+		go func() {
+			for _, p := range parts {
+				pw.Write([]byte(p))
+				time.Sleep(25 * time.Millisecond)
+			}
+		}()
+		got, err := e.ReadLine("> ")
+		want := "abXc"
+		if len(parts) > 3 && parts[3] == "1;5" {
+			want = "Xabc" // word-left from the end of "abc"
+		}
+		if err != nil || got != want {
+			t.Errorf("%q: got %q err %v, want %q", parts, got, err, want)
+		}
+	}
+}
+
+// A lone ESC (nothing follows) is ignored and does not eat the next key.
+func TestLoneEscape(t *testing.T) {
+	pr, pw := io.Pipe()
+	e := NewEditor(pr, io.Discard, nil)
+	e.escWait = 20 * time.Millisecond
+	go func() {
+		pw.Write([]byte("ab\x1b"))
+		time.Sleep(100 * time.Millisecond) // well past escWait
+		pw.Write([]byte("c\r"))
+	}()
+	if got, err := e.ReadLine("> "); err != nil || got != "abc" {
+		t.Errorf("got %q err %v, want abc", got, err)
+	}
+}
+
+func lastCursorCol(out string) int {
+	i := strings.LastIndex(out, "\x1b[")
+	var n int
+	if i >= 0 {
+		fmt.Sscanf(out[i:], "\x1b[%dC", &n)
+	}
+	return n
+}
+
+func TestDisplayWidth(t *testing.T) {
+	cases := []struct {
+		name, in string
+		col      int // cursor column after typing in (prompt "> " is 2 wide)
+	}{
+		{"ascii", "ab", 4},
+		{"wide cjk is 2 columns", "日本", 6},
+		{"emoji is 2 columns", "a😀", 5},
+		{"combining mark is 0 columns", "éx", 4},
+	}
+	for _, c := range cases {
+		var out strings.Builder
+		e := NewEditor(strings.NewReader(c.in), &out, func() int { return 80 })
+		e.ReadLine("> ") // returns at EOF with the partial line
+		if got := lastCursorCol(out.String()); got != c.col {
+			t.Errorf("%s: cursor column %d, want %d", c.name, got, c.col)
+		}
+	}
+}
+
+func TestWideCharsScroll(t *testing.T) {
+	var out strings.Builder
+	long := strings.Repeat("日本語", 20) // 120 columns
+	e := NewEditor(strings.NewReader(long), &out, func() int { return 30 })
+	got, err := e.ReadLine("at> ")
+	if err != nil || got != long {
+		t.Fatalf("lost input: %v", err)
+	}
+	for _, chunk := range strings.Split(out.String(), "\r") {
+		if i := strings.Index(chunk, "\x1b[K"); i >= 0 {
+			shown := strings.TrimPrefix(chunk[:i], "at> ")
+			if w := strWidth([]rune(shown)); w > 30-4 {
+				t.Fatalf("visible text is %d columns, window is %d", w, 30-4)
+			}
 		}
 	}
 }

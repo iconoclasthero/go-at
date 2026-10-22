@@ -9,14 +9,21 @@ package main
 // Ctrl-C (abort).
 //
 // Long lines scroll horizontally rather than wrapping, so redraw is always
-// a single terminal row.
+// a single terminal row. Column widths account for wide (CJK/emoji) and
+// zero-width (combining) characters using a small built-in table.
+//
+// Input is pumped through a goroutine so that an ESC can be told apart from
+// the start of an arrow-key sequence by waiting briefly for more bytes,
+// instead of guessing from what happens to be buffered: terminals and ssh
+// may deliver one key press in several reads.
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
+	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 var errInterrupt = errors.New("interrupted")
@@ -54,21 +61,92 @@ type key struct {
 }
 
 type Editor struct {
-	in     *bufio.Reader
-	out    io.Writer
-	cols   func() int
-	hist   []string
-	killed []rune
+	src     chan byte
+	rerr    error // read error; valid once src is closed
+	out     io.Writer
+	cols    func() int
+	escWait time.Duration // how long to wait for the rest of an escape sequence
+	hist    []string
+	killed  []rune
 }
 
+var errTimeout = errors.New("timeout")
+
 func NewEditor(in io.Reader, out io.Writer, cols func() int) *Editor {
-	return &Editor{in: bufio.NewReader(in), out: out, cols: cols}
+	e := &Editor{src: make(chan byte), out: out, cols: cols, escWait: 200 * time.Millisecond}
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := in.Read(buf)
+			for _, b := range buf[:n] {
+				e.src <- b
+			}
+			if err != nil {
+				e.rerr = err
+				close(e.src)
+				return
+			}
+		}
+	}()
+	return e
+}
+
+func (e *Editor) readByte() (byte, error) {
+	b, ok := <-e.src
+	if !ok {
+		return 0, e.rerr
+	}
+	return b, nil
+}
+
+// readByteWait is readByte with a timeout (errTimeout).
+func (e *Editor) readByteWait(d time.Duration) (byte, error) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case b, ok := <-e.src:
+		if !ok {
+			return 0, e.rerr
+		}
+		return b, nil
+	case <-t.C:
+		return 0, errTimeout
+	}
+}
+
+func (e *Editor) readRune() (rune, error) {
+	b, err := e.readByte()
+	if err != nil {
+		return 0, err
+	}
+	if b < utf8.RuneSelf {
+		return rune(b), nil
+	}
+	need := 0
+	switch {
+	case b >= 0xF0 && b <= 0xF7:
+		need = 3
+	case b >= 0xE0:
+		need = 2
+	case b >= 0xC0:
+		need = 1
+	}
+	buf := []byte{b}
+	for i := 0; i < need; i++ {
+		c, err := e.readByte()
+		if err != nil {
+			return utf8.RuneError, nil
+		}
+		buf = append(buf, c)
+	}
+	r, _ := utf8.DecodeRune(buf)
+	return r, nil
 }
 
 // readKey decodes one key press. A lone ESC (nothing buffered behind it)
 // is reported as kNone.
 func (e *Editor) readKey() (key, error) {
-	r, _, err := e.in.ReadRune()
+	r, err := e.readRune()
 	if err != nil {
 		return key{}, err
 	}
@@ -110,27 +188,29 @@ func (e *Editor) readKey() (key, error) {
 	case 27:
 		return e.readEscape()
 	}
-	if r < 32 {
+	if r < 32 || r == utf8.RuneError {
 		return key{kind: kNone}, nil
 	}
 	return key{kind: kRune, r: r}, nil
 }
 
+// readEscape decodes what follows an ESC. If nothing arrives within escWait
+// (or the sequence stalls midway) it was a lone ESC and is ignored.
 func (e *Editor) readEscape() (key, error) {
-	if e.in.Buffered() == 0 {
-		return key{kind: kNone}, nil
-	}
-	b, err := e.in.ReadByte()
+	b, err := e.readByteWait(e.escWait)
 	if err != nil {
+		if err == errTimeout || err == io.EOF {
+			return key{kind: kNone}, nil // lone ESC; a pending EOF surfaces on the next read
+		}
 		return key{}, err
 	}
 	switch b {
 	case '[':
 		var params []byte
 		for {
-			c, err := e.in.ReadByte()
+			c, err := e.readByteWait(e.escWait)
 			if err != nil {
-				return key{}, err
+				return key{kind: kNone}, nil
 			}
 			if c >= 0x40 && c <= 0x7e {
 				return csiKey(string(params), c), nil
@@ -138,9 +218,9 @@ func (e *Editor) readEscape() (key, error) {
 			params = append(params, c)
 		}
 	case 'O':
-		c, err := e.in.ReadByte()
+		c, err := e.readByteWait(e.escWait)
 		if err != nil {
-			return key{}, err
+			return key{kind: kNone}, nil
 		}
 		return csiKey("", c), nil
 	case 'b':
@@ -227,6 +307,34 @@ func (s *lineState) insert(rs []rune) {
 	s.pos += len(rs)
 }
 
+// runeWidth returns the terminal columns a rune occupies: 0 for combining
+// marks, 2 for East Asian wide characters and emoji, 1 otherwise. This is a
+// compact approximation of wcwidth, not a full Unicode implementation.
+func runeWidth(r rune) int {
+	switch {
+	case r == 0:
+		return 0
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
+		return 0
+	case r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+		(r >= 0xac00 && r <= 0xd7a3) || (r >= 0xf900 && r <= 0xfaff) ||
+		(r >= 0xfe30 && r <= 0xfe6f) || (r >= 0xff00 && r <= 0xff60) ||
+		(r >= 0xffe0 && r <= 0xffe6) || (r >= 0x1f300 && r <= 0x1f64f) ||
+		(r >= 0x1f900 && r <= 0x1f9ff) || (r >= 0x20000 && r <= 0x3fffd)):
+		return 2
+	}
+	return 1
+}
+
+func strWidth(rs []rune) int {
+	w := 0
+	for _, r := range rs {
+		w += runeWidth(r)
+	}
+	return w
+}
+
 func (e *Editor) render(prompt string, s *lineState) {
 	cols := 80
 	if e.cols != nil {
@@ -234,7 +342,7 @@ func (e *Editor) render(prompt string, s *lineState) {
 			cols = c
 		}
 	}
-	pw := len([]rune(prompt))
+	pw := strWidth([]rune(prompt))
 	w := cols - pw - 1
 	if w < 8 {
 		w = 8
@@ -245,15 +353,17 @@ func (e *Editor) render(prompt string, s *lineState) {
 	if s.pos < s.start {
 		s.start = s.pos
 	}
-	if s.pos >= s.start+w {
-		s.start = s.pos - w + 1
+	// scroll right until the cursor column fits inside the visible window
+	for s.start < s.pos && strWidth(s.buf[s.start:s.pos]) > w-1 {
+		s.start++
 	}
-	end := s.start + w
-	if end > len(s.buf) {
-		end = len(s.buf)
+	end, used := s.start, 0
+	for end < len(s.buf) && used+runeWidth(s.buf[end]) <= w {
+		used += runeWidth(s.buf[end])
+		end++
 	}
 	fmt.Fprintf(e.out, "\r%s%s\x1b[K\r", prompt, string(s.buf[s.start:end]))
-	if n := pw + s.pos - s.start; n > 0 {
+	if n := pw + strWidth(s.buf[s.start:s.pos]); n > 0 {
 		fmt.Fprintf(e.out, "\x1b[%dC", n)
 	}
 }

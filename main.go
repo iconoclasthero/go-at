@@ -1,5 +1,5 @@
 // at, atq, atrm, batch and atd in one binary (dispatch on argv[0], or use
-// the first argument as the command name: `at-go atq`).
+// the first argument as the command name: `go-at atq`).
 package main
 
 import (
@@ -9,15 +9,43 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
 const timeFmt = "Mon Jan _2 15:04:05 2006"
 
+// The terminal is put in raw mode while at> is active. Every way out of the
+// program must put it back, so the restore function lives here where die(),
+// the signal handler and the normal return path can all reach it.
+var (
+	termMu      sync.Mutex
+	termRestore func()
+)
+
+func setTermRestore(f func()) {
+	termMu.Lock()
+	termRestore = f
+	termMu.Unlock()
+}
+
+func restoreTerm() {
+	termMu.Lock()
+	f := termRestore
+	termRestore = nil
+	termMu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
 func die(format string, a ...any) {
+	restoreTerm() // before printing: raw mode has no \n -> \r\n translation
 	fmt.Fprintf(os.Stderr, "at: "+format+"\n", a...)
 	os.Exit(1)
 }
@@ -86,8 +114,9 @@ TIME examples:
   at now + 2 hours 55 minutes       at +2h55m                   at in 90 seconds
   at 11-25-2026 09:30 + 2 hours 55 minutes
   at sunday 9:30 am ET + 1 hour     at Nov 25 2026 9am          at next friday
-Jobs run in bash by default (-s or $AT_SHELL to change). Start the daemon
-with: atd   (jobs only run while atd is running)
+Jobs run in bash by default (-s or $AT_SHELL to change). Jobs only run while
+atd is running: start it with "atd -d" (background) or "atd" (foreground).
+Set AT_AUTOSTART=1 to have "at" start the daemon when it finds none.
 `
 
 func cmdAt(args []string) {
@@ -151,7 +180,15 @@ func cmdAt(args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "job %d at %s\n", id, runAt.Format(timeFmt+" MST"))
 	if !sp.DaemonRunning() {
-		fmt.Fprintln(os.Stderr, "warning: atd is not running, so this job will not run until you start it (run: atd)")
+		if os.Getenv("AT_AUTOSTART") == "1" {
+			if started, pid, err := detachDaemon(sp); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not start atd: %v\n", err)
+			} else if started {
+				fmt.Fprintf(os.Stderr, "started atd (pid %d)\n", pid)
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: atd is not running, so this job will not run until you start it (run: atd -d)")
+		}
 	}
 }
 
@@ -167,7 +204,12 @@ func readCommands(file string, runAt time.Time) string {
 	}
 	stdin := int(os.Stdin.Fd())
 	if file == "" && isTerminal(stdin) && isTerminal(int(os.Stderr.Fd())) {
-		return readInteractive(runAt)
+		cmds, cancelled := readInteractive(runAt)
+		if cancelled {
+			fmt.Fprintln(os.Stderr, "at: cancelled; job not created")
+			os.Exit(130)
+		}
+		return cmds
 	}
 	b, err := io.ReadAll(bufio.NewReader(os.Stdin))
 	if err != nil {
@@ -177,30 +219,45 @@ func readCommands(file string, runAt time.Time) string {
 }
 
 // readInteractive prompts with at> and a real line editor. End with Ctrl-D.
-func readInteractive(runAt time.Time) string {
+// Raw mode is held for the whole session and undone by defer on normal return
+// or panic, by die(), and by the signal handler below. Only SIGKILL (which no
+// program can catch) can leave the terminal raw; `stty sane` fixes that.
+func readInteractive(runAt time.Time) (cmds string, cancelled bool) {
 	fmt.Fprintf(os.Stderr, "at %s\n", runAt.Format(timeFmt+" MST"))
+	restore, err := makeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		die("cannot set terminal mode: %v", err)
+	}
+	setTermRestore(restore)
+	defer restoreTerm()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
+	defer signal.Stop(sig)
+	go func() {
+		if s, ok := <-sig; ok {
+			restoreTerm()
+			fmt.Fprintln(os.Stderr, "\nat: interrupted; job not created")
+			os.Exit(128 + int(s.(syscall.Signal)))
+		}
+	}()
+
 	ed := NewEditor(os.Stdin, os.Stderr, func() int { return termCols(int(os.Stderr.Fd())) })
 	var lines []string
 	for {
-		restore, err := makeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			die("cannot set terminal mode: %v", err)
-		}
 		line, err := ed.ReadLine("at> ")
-		restore()
 		if err == io.EOF {
 			break
 		}
 		if err == errInterrupt {
-			fmt.Fprintln(os.Stderr, "at: cancelled; job not created")
-			os.Exit(130)
+			return "", true
 		}
 		if err != nil {
 			die("%v", err)
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n") + "\n"
+	return strings.Join(lines, "\n") + "\n", false
 }
 
 func cmdList(args []string) {
@@ -273,8 +330,23 @@ func catJobs(ids []string) {
 
 func cmdDaemon(args []string) {
 	fs := flag.NewFlagSet("atd", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, "usage: atd [-d]\n  (no flag)  run in the foreground\n  -d         start in the background if not already running; silent no-op if it is\n             (safe to run from cron every minute as a watchdog)\n")
+	}
+	detach := fs.Bool("d", false, "run in the background; do nothing if already running")
 	fs.Parse(args)
-	if err := runDaemon(openSpool()); err != nil {
+	sp := openSpool()
+	if *detach {
+		started, pid, err := detachDaemon(sp)
+		if err != nil {
+			die("%v", err)
+		}
+		if started {
+			fmt.Fprintf(os.Stderr, "atd started (pid %d), log: %s\n", pid, sp.path("atd.log"))
+		}
+		return
+	}
+	if err := runDaemon(sp); err != nil {
 		die("%v", err)
 	}
 }

@@ -53,6 +53,8 @@ func runDaemon(s *Spool) error {
 		}
 	}
 
+	// A daemon started with a trailing & must outlive its terminal.
+	signal.Ignore(syscall.SIGHUP)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	var wg sync.WaitGroup
@@ -117,4 +119,43 @@ func (s *Spool) launch(j Job, wg *sync.WaitGroup) bool {
 		fmt.Fprintf(os.Stderr, "atd: job %d done (%s); output in %s\n", j.ID, status, filepath.Join(s.Dir, "logs", id+".log"))
 	}()
 	return true
+}
+
+// detachDaemon starts atd in its own session with output going to
+// <spool>/atd.log, and returns once it holds the lock. If a daemon is already
+// running it does nothing and returns nil, so it is safe to run from cron every
+// minute as a watchdog.
+func detachDaemon(s *Spool) (started bool, pid int, err error) {
+	if s.DaemonRunning() {
+		return false, 0, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false, 0, err
+	}
+	logf, err := os.OpenFile(s.path("atd.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return false, 0, err
+	}
+	defer logf.Close()
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		return false, 0, err
+	}
+	defer null.Close()
+	cmd := exec.Command(exe, "atd")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, logf, logf
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return false, 0, err
+	}
+	pid = cmd.Process.Pid
+	cmd.Process.Release()
+	for i := 0; i < 40; i++ { // up to 2s for the child to take the lock
+		if s.DaemonRunning() {
+			return true, pid, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false, pid, fmt.Errorf("atd did not start; see %s", s.path("atd.log"))
 }

@@ -1,19 +1,19 @@
 PREFIX ?= $(HOME)/.local
 BIN := at atq atrm batch atd
 
-all: at-go
+all: go-at
 
-at-go: *.go
-	go build -o at-go .
+go-at: *.go
+	go build -o go-at .
 
 test:
 	go vet ./... && go test ./...
 
 # one binary, five names (it dispatches on argv[0])
-install: at-go
+install: go-at
 	install -d $(PREFIX)/bin
-	install -m755 at-go $(PREFIX)/bin/at-go
-	for n in $(BIN); do ln -sf at-go $(PREFIX)/bin/$$n; done
+	install -m755 go-at $(PREFIX)/bin/go-at
+	for n in $(BIN); do ln -sf go-at $(PREFIX)/bin/$$n; done
 
 install-service:
 	install -d $(HOME)/.config/systemd/user
@@ -22,4 +22,6 @@ install-service:
 	systemctl --user enable --now atd
 
 clean:
-	rm -f at-go
+	rm -f go-at
+
+.PHONY: all test install install-service clean

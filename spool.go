@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -58,15 +59,38 @@ func (s *Spool) nextID() (int, error) {
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("locking job counter: %w", err)
 	}
-	var b [32]byte
-	n, _ := f.Read(b[:])
-	id, _ := strconv.Atoi(strings.TrimSpace(string(b[:n])))
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return 0, fmt.Errorf("reading job counter: %w", err)
+	}
+	id := 0
+	if t := strings.TrimSpace(string(data)); t != "" {
+		if id, err = strconv.Atoi(t); err != nil || id < 0 {
+			return 0, fmt.Errorf("job counter %s is corrupt (contains %q); fix or delete it", s.path("seq"), t)
+		}
+	}
 	id++
-	f.Truncate(0)
-	f.WriteAt([]byte(strconv.Itoa(id)+"\n"), 0)
+	// never hand out an id that is still in use, even if the counter was reset
+	for fileExists(s.path("jobs", strconv.Itoa(id))) || fileExists(s.path("running", strconv.Itoa(id))) {
+		id++
+	}
+	if err := f.Truncate(0); err != nil {
+		return 0, fmt.Errorf("updating job counter: %w", err)
+	}
+	if _, err := f.WriteAt([]byte(strconv.Itoa(id)+"\n"), 0); err != nil {
+		return 0, fmt.Errorf("updating job counter: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return 0, fmt.Errorf("updating job counter: %w", err)
+	}
 	return id, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // DaemonRunning reports whether some process holds the daemon lock.

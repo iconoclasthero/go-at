@@ -73,6 +73,7 @@ func TestParseSpec(t *testing.T) {
 		"", "foo", "25:00", "9:75", "yesterday", "now - 5 minutes",
 		"10-1-2026 9am", "feb 30 2027", "11-25-2026 09:30 sunday", // Nov 25 2026 is a Wednesday
 		"+", "+ hours", "5", "13pm", "9am 10am", "tomorrow today",
+		"now + 1:90", "now + 1:30:75", "now + 0:60",
 	}
 	for _, s := range bad {
 		if got, err := ParseSpec(s, now, ny); err == nil {
