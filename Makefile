@@ -1,5 +1,6 @@
 PREFIX ?= $(HOME)/.local
-BIN := at atq atrm batch atd
+# go-at is the program; the others are names it answers to
+LINKS := go-atq go-atrm go-batch go-atd
 
 all: go-at
 
@@ -9,11 +10,11 @@ go-at: *.go
 test:
 	go vet ./... && go test ./...
 
-# one binary, five names (it dispatches on argv[0])
+# one binary, five names (it dispatches on the name it is called by)
 install: go-at
 	install -d $(PREFIX)/bin
 	install -m755 go-at $(PREFIX)/bin/go-at
-	for n in $(BIN); do ln -sf go-at $(PREFIX)/bin/$$n; done
+	for n in $(LINKS); do ln -sf go-at $(PREFIX)/bin/$$n; done
 
 install-service:
 	install -d $(HOME)/.config/systemd/user

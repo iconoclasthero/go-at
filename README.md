@@ -1,31 +1,106 @@
 # go-at
 
-A from-scratch Go take on `at`. One binary (`go-at`), five command names:
-`at`, `atq`, `atrm`, `batch`, `atd`. No dependencies, no root, no setuid.
+A from-scratch Go take on `at`: schedule a command to run later. One binary,
+installed under five names that never collide with the system `at`:
 
-This is **not a drop-in replacement** for Debian `at`. It keeps the familiar
-commands and fixes the parts that annoyed its author; see
-[Compatibility decisions](#compatibility-decisions) for exactly where it differs.
+    go-at     schedule a job                  go-atrm   remove or stop jobs
+    go-atq    list jobs                       go-batch  schedule a job that waits for low load
+    go-atd    the daemon that runs them
+
+No dependencies, no root, no setuid. This is **not a drop-in replacement** for
+`at`; see [Compatibility decisions](#compatibility-decisions).
 
 What's different, on purpose:
 
 1. **Jobs run in bash** by default (`-s SHELL` or `$AT_SHELL` to change it).
-2. **`at>` has a real line editor**: arrows, Home/End, Ctrl-A/E, word jumps
-   (Alt-B/F, Ctrl-Left/Right), Delete, Ctrl-K/U/W/Y, history (Up/Down). Ctrl-D
-   ends input, Ctrl-C cancels.
-3. **Seconds** work everywhere: `9:30:15`, `+ 90 seconds`, `now + 5 sec`.
-4. **Mixed-unit offsets**: `at 11-25-2026 09:30 + 2 hours 55 minutes`,
-   `at +2h55m`, `at now + 1 day 2 hours - 5 minutes`, `at now + 2:55`.
+2. **`at>` has a real line editor**: arrows, Home/End, word jumps, Ctrl-K/U/W/Y,
+   history. Ctrl-D ends input, Ctrl-C cancels.
+3. **Seconds** work everywhere: `9:30:15`, `+ 90 seconds`.
+4. **Mixed-unit offsets**: `go-at 11-25-2026 09:30 + 2 hours 55 minutes`.
+5. **Plain words, not codes.** States are `queued`, `running`, `finished`...
+   Jobs can have **names**. You can see a running job's **process group** and
+   **stop it** without having captured `$$`.
 
 ## Install
 
     cd go-at
     make test                 # go vet + unit and end-to-end tests
-    make install              # ~/.local/bin/{go-at,at,atq,atrm,batch,atd}
+    make install              # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
 
-Put `~/.local/bin` **before** `/usr/bin` in `PATH`, or you will keep running the
-system `at`. (`hash -r; which at` to check.) Needs Go to build; tested with 1.24
-and newer.
+Needs Go to build (tested with 1.24 and newer). Make sure `~/.local/bin` is on
+your `PATH`. If you want the classic names, symlink them yourself
+(`ln -s go-at ~/.local/bin/at`); the binary answers to either spelling.
+
+## Example: wait for something, then poll until it appears
+
+    $ go-at --name steelers-arr 2026-10-25 09:30 + 2 hours 55 minutes
+    at Sun Oct 25 12:25:00 2026 EDT
+    at> until steelers-arr; do sleep 60; ((++i)); printf %s\\n "$i"; done
+    at> <Ctrl-D>
+    job 10 (steelers-arr) at Sun Oct 25 12:25:00 2026 EDT
+
+    $ go-atq
+    ID  NAME          STATE    WHEN                              DETAIL
+    10  steelers-arr  running  started Sun Oct 25 12:25:00 2026  pgid 48213
+
+    $ go-atrm -k steelers-arr         # stops the loop and its sleep
+    sent SIGTERM to job 10 (steelers-arr); process group 48213
+
+    $ go-atq --all
+    ID  NAME          STATE       WHEN                            DETAIL
+    10  steelers-arr  terminated  ended Sun Oct 25 14:02:11 2026  SIGTERM, ran 1h37m11s
+
+    $ go-at --log steelers-arr        # everything the job printed
+
+## States
+
+Every job is in exactly one state, always shown as a word:
+
+| state | meaning |
+| :- | :- |
+| `queued` | waiting for its time |
+| `waiting` | due, but `--batch` is holding it until system load is low |
+| `running` | its process group is alive |
+| `finished` | exited 0 |
+| `failed` | exited non-zero (the exit code is shown) |
+| `terminated` | killed by a signal (the signal is shown) |
+| `interrupted` | the daemon stopped while it was running and the job is gone; **never re-run** |
+
+`go-atq` lists queued, waiting and running jobs. `go-atq --all` adds ended
+ones, kept for 30 days (`$AT_KEEP_DAYS`). `go-atq --json` is for scripts and any
+future UI: one object per job with `id`, `name`, `state`, `scheduled`,
+`started`, `ended`, `pgid`, `nice`, `batch`, `exit_code`, `signal`, `log`.
+
+## Names and ids
+
+A job has a number (assigned in order, just a handle) and optionally a name.
+Anywhere a job is expected you can use either: `go-atrm steelers-arr`,
+`go-at -c 10`. Names start with a letter (so they can't be mistaken for numbers
+or options), may contain letters, digits, `.`, `_`, `-`, and must be unique
+among queued and running jobs.
+
+## Finding and stopping a running job
+
+While a job runs the daemon keeps `<spool>/running/<id>.pid`, a bare number:
+the job's **process-group id**. Each job runs in its own session, so the shell,
+your `until` loop and every `sleep` it starts share that group. Use it directly:
+
+    kill -- -"$(cat ~/.local/state/at/running/10.pid)"      # note the minus
+
+or let go-atrm do it: `go-atrm -k NAME` sends SIGTERM to the whole group
+(`-s KILL`, `-s INT`, `-s 1`... to choose). Plain `go-atrm` only removes queued
+jobs and refuses to touch a running one. Before signalling, `-k` checks that the
+process is still the job (still a group leader, same start time on Linux), so
+a stale pid file can never get an unrelated process killed. Scripts can also use
+the `AT_JOB_ID` and `AT_JOB_NAME` variables every job gets.
+
+## Priority and batch
+
+- `--nice N` (0 to 19): run at lower priority; shown as `nice=N`.
+- `--batch` (or `go-batch`): hold the job until the 1-minute load average is
+  below 1.5 (`$AT_BATCH_LOAD`); until then it reads `waiting`.
+
+There are no queue letters.
 
 ## Time specs
 
@@ -42,87 +117,124 @@ offsets are elapsed time (correct across DST changes); day/week/month/year
 offsets keep wall-clock time. In `H:MM[:SS]` durations minutes and seconds must
 be below 60 (`now + 1:90` is an error, not 2h30m).
 
-Resolution rules:
-
 - A bare clock time that has passed means tomorrow; a bare weekday means its
   next occurrence; a month/day without a year that has passed means next year.
 - A date that contradicts its weekday (`sunday 11-25-2026`, which is a
   Wednesday) is an error rather than a guess.
 - Numeric dates are US order (`MM-DD-YYYY`, `MM/DD/YYYY`) except `YYYY-MM-DD`
   and dotted `DD.MM.YYYY`.
+- A date with no clock time (`tomorrow`, `friday`) uses the current time of day.
 
 ## Running the daemon
 
-Jobs only run while `atd` is running. `at` warns when it isn't.
+Jobs only run while `go-atd` is running; `go-at` and `go-atq` warn when it
+isn't. It runs as **you**, never as root (see below).
 
-    atd -d          # start in the background; silent no-op if already running
-    atd             # foreground (what a service manager wants)
+    go-atd -d       # start in the background; silent no-op if already running
+    go-atd          # foreground (what a service manager wants)
 
-**With systemd:** `make install-service` installs and starts a user unit.
+**systemd:** `make install-service` installs and starts a user unit
+(`loginctl enable-linger $USER` keeps it alive after you log out). As root you
+can instead run a system unit with `User=you` and avoid `--user` sessions.
 
-**Without systemd** (shared hosts, seedboxes): a bare `atd &` is not enough,
-since nothing restarts it if it dies or the machine reboots. `atd -d` is built
-to be run repeatedly, so let cron be the watchdog:
+**supervisord** (one entry per user; root or you edit it):
 
-    @reboot   $HOME/.local/bin/atd -d
-    * * * * * $HOME/.local/bin/atd -d
+    [program:go-atd]
+    command=/home/you/.local/bin/go-atd
+    user=you
+    environment=AT_SPOOL="/home/you/.local/state/at"
+    autostart=true
+    autorestart=true
+    startsecs=1
 
-It takes a lock on the spool, so at most one daemon ever runs; the cron line does
-nothing while it's alive and restarts it within a minute if it isn't. Daemon
-output goes to `<spool>/atd.log`. `atd` ignores SIGHUP, so it survives its
-terminal closing. Alternatively set `AT_AUTOSTART=1` and `at` will start the
-daemon itself whenever it finds none (that still does not survive a reboot).
+Use the foreground command (no `-d`, and there is no `-f`), and make `AT_SPOOL`
+match the spool your login shell uses.
+
+**Neither** (plain shared host): let cron be the watchdog. `go-atd -d` takes a
+lock, so at most one daemon ever runs, and it does nothing while one is alive:
+
+    @reboot   $HOME/.local/bin/go-atd -d
+    * * * * * $HOME/.local/bin/go-atd -d
+
+Daemon output goes to `<spool>/atd.log`. `go-atd` ignores SIGHUP, so it survives
+its terminal closing. `AT_AUTOSTART=1` makes `go-at` start the daemon itself
+when it finds none (that does not survive a reboot).
+
+### Stopping the daemon, and crashes
+
+SIGTERM/SIGINT make the daemon stop starting jobs and **wait for running jobs
+to finish**, so their outcome is recorded; with a long-running job a stop can
+take that long. If the daemon is killed anyway (SIGKILL, a supervisor timeout),
+jobs keep running because they live in their own sessions. A restarted daemon
+leaves live ones alone (`go-atq` still shows them running and `go-atrm -k` still
+works) and, once such a job is gone, records it as `interrupted`, since its exit
+status is unknown. A reboot ends the jobs too. **A job is never re-run
+automatically**: it may have partly completed, and repeating a half-finished
+download or transfer can repeat side effects. If a job must survive crashes,
+make the script itself idempotent and resumable and have it write a "succeeded"
+marker only after the last step. Interrupted scripts are kept as
+`<spool>/logs/<id>.interrupted`.
+
+## Files and settings
+
+Per-user spool: `$AT_SPOOL`, else `$XDG_STATE_HOME/at`, else `~/.local/state/at`.
+
+    jobs/<id>          queued job: a plain bash script (go-at -c shows it)
+    running/<id>       the same script while it runs, plus <id>.pid and <id>.proc
+    history/<id>.json  outcome record of an ended job
+    logs/<id>.log      everything the job printed, with start/finish markers
+
+| variable | effect |
+| :- | :- |
+| `AT_SPOOL` | spool directory |
+| `AT_SHELL` | shell for jobs (default `bash`) |
+| `AT_AUTOSTART=1` | `go-at` starts the daemon when none runs |
+| `AT_BATCH_LOAD` | load-average limit for `--batch` (default 1.5) |
+| `AT_KEEP_DAYS` | how long ended-job records and logs are kept (default 30) |
+| `AT_JOB_ID`, `AT_JOB_NAME` | set inside every job |
 
 ## Compatibility decisions
 
-Things that differ from Debian `at`, each chosen deliberately:
+Where this differs from Debian `at`, each on purpose:
 
-- **Spool and privileges.** Per-user spool (`$AT_SPOOL`, else
-  `~/.local/state/at`), no setuid, no system-wide `atd`, no `at.allow` /
-  `at.deny`. A user can only schedule and see their own jobs.
+- **Single-user model, no privileges.** Nothing is setuid, the daemon never
+  changes uid, and there is no `at.allow`/`at.deny`. Each user runs their own
+  daemon with their own spool. **Never run `go-atd` as root against a spool other
+  users can write to**: it runs whatever is in `jobs/`, so that would let them
+  run code as root. Run it as the user whose jobs it is (supervisord `user=`,
+  systemd `User=`). It does not yet verify spool ownership or permissions.
+- **Command names** carry a `go-` prefix so they never shadow the system `at`;
+  the two don't share a spool.
+- **Output format.** `go-atq` prints a table with a header and word states, not
+  the classic one-line `id<TAB>date queue user`. Scripts that parse `atq` need
+  `--json`. Queue letters and `-q` are gone (use `--nice`/`--batch`); a
+  classic `-q` gives an error that says so.
 - **Environment.** Jobs capture the submitting shell's environment as `export`
   lines, except session-specific variables (`TERM`, `DISPLAY`, `PWD`, `OLDPWD`,
   `SHLVL`, `_`, `UID`, `EUID`, `PPID`, `GROUPS`, `SHELLOPTS`, `BASHOPTS`,
   `BASH_VERSION*`, `COLUMNS`, `LINES`) and exported bash functions. The working
-  directory and `umask` at submission time are restored. `at -c ID` prints the
-  exact script.
-- **Shell.** bash by default, resolved to an absolute path at submission time
-  and written as the script's shebang. The job file is a plain script; you can
-  read or run it by hand.
-- **Output.** Written to `<spool>/logs/<id>.log`, with a trailing line giving the
-  exit status. **No mail.** If you want a notification, put it in the job.
-- **A date with no clock time** (`at tomorrow`, `at friday`) uses the current
-  time of day.
-- **Options supported:** `-q`, `-f`, `-s`, `-l`, `-d`/`-r`, `-c`, `-b`, plus
-  `atq [-q]`, `atrm ID...`, `batch`. Everything else in `at(1)` (`-m`, `-v`,
-  `-t`, `-V`, ...) is not implemented.
-- **`batch`** (queue `b`) waits for the 1-minute load average to drop below 1.5
-  (`$AT_BATCH_LOAD`); on systems without `/proc/loadavg` it just runs.
+  directory and `umask` at submission are restored. `go-at -c` prints the exact
+  script. The spool is private to you (`0700`), but the script holds your
+  environment, including any secrets in it.
+- **Output** goes to a log file; **no mail.** Put a notification in the job.
 - **Late jobs.** A job that came due while the daemon was down runs as soon as
-  the daemon starts.
-
-### What happens if the daemon dies mid-job
-
-The job is **not** retried. When `atd` starts it finds scripts still marked as
-running, logs that they were interrupted, and moves them to
-`<spool>/logs/<id>.interrupted` instead of re-running them: the daemon cannot
-know how far a job got, and re-running a half-finished download or transfer can
-repeat side effects. If a job must survive crashes, make the script itself
-idempotent and resumable (for example, skip finished steps and write a
-"succeeded" marker only after the last step), and have your own check look for
-that marker. Jobs that were merely pending are unaffected and run normally.
+  it starts.
+- **Options:** `-n/--name`, `--nice`, `-b/--batch`, `-s`, `-f`, `-l`, `-d`/`-r`,
+  `-c`, `--log`, `-a/--all`, `--json`, and `go-atrm -k/-s`. Everything else in
+  `at(1)` (`-m`, `-v`, `-t`, `-V`, ...) is not implemented.
 
 ## Terminal safety
 
 While `at>` is active the terminal is in raw mode. It is restored on normal
-exit, on Ctrl-C/Ctrl-D, on SIGTERM/SIGHUP/SIGINT/SIGQUIT, and on any error
-exit. Only SIGKILL can leave it raw; run `stty sane` or `reset` if that happens.
+exit, Ctrl-C/Ctrl-D, SIGTERM/SIGHUP/SIGINT/SIGQUIT, and any error exit. Only
+SIGKILL can leave it raw; run `stty sane` or `reset` if that happens.
 
 ## Known limits
 
 - Long input lines scroll horizontally instead of wrapping.
 - Character widths use a built-in approximation of `wcwidth` (CJK and emoji are
-  2 columns, combining marks 0). Unusual scripts, ZWJ emoji sequences and
-  terminal-specific width quirks can still misplace the cursor.
-- Tab does nothing (no completion).
+  2 columns, combining marks 0); unusual scripts and ZWJ emoji sequences can
+  still misplace the cursor. Tab does nothing (no completion).
+- Process verification before `-k` uses Linux `/proc`; elsewhere it falls back
+  to the weaker group-leader check.
 - Linux is tested. macOS cross-compiles but is untested; no BSD support.

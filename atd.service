@@ -1,8 +1,8 @@
 [Unit]
-Description=at job daemon (Go)
+Description=go-at job daemon
 
 [Service]
-ExecStart=%h/.local/bin/atd
+ExecStart=%h/.local/bin/go-atd
 Restart=on-failure
 # let running jobs finish on stop
 KillMode=mixed
