@@ -126,7 +126,16 @@ func (d *daemon) launch(j Job) {
 	id := strconv.Itoa(j.ID)
 	claimed := s.path("running", id)
 	d.setActive(j.ID, true) // before the rename, so the sweep never sees it as an orphan
-	if err := os.Rename(j.path, claimed); err != nil {
+	// Hold the spool lock for the rename so go-at --edit can never swap the
+	// file between our read of it and the claim.
+	unlock, lerr := s.lock()
+	if lerr != nil {
+		d.setActive(j.ID, false)
+		return
+	}
+	rerr := os.Rename(j.path, claimed)
+	unlock()
+	if rerr != nil {
 		d.setActive(j.ID, false)
 		return
 	}

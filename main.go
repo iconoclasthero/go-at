@@ -113,6 +113,7 @@ const atUsage = `usage: go-at [options] TIME...        schedule commands (typed 
 
        go-at -l | go-atq [-a|--all] [--json]   list jobs: queued, waiting, running (--all adds ended ones)
        go-at -c JOB                             print the script of a queued or running job
+       go-at --edit JOB                         change a queued job's commands in $VISUAL / $EDITOR
        go-at --log JOB                          print a job's output
        go-atrm JOB...                           remove queued jobs
        go-atrm -k [-s SIGNAL] JOB...            stop running jobs (default signal TERM)
@@ -135,7 +136,7 @@ func cmdAt(args []string) {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, atUsage) }
 	var name, file, shellFlag string
 	var nice int
-	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag bool
+	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit bool
 	fs.StringVar(&name, "n", "", "")
 	fs.StringVar(&name, "name", "", "")
 	fs.IntVar(&nice, "nice", 0, "")
@@ -151,6 +152,7 @@ func cmdAt(args []string) {
 	fs.BoolVar(&all, "all", false, "")
 	fs.BoolVar(&asJSON, "json", false, "")
 	fs.BoolVar(&showLogFlag, "log", false, "")
+	fs.BoolVar(&edit, "edit", false, "")
 	oldQueue := fs.String("q", "", "")
 	fs.Parse(args)
 
@@ -166,6 +168,16 @@ func cmdAt(args []string) {
 		return
 	case showLogFlag:
 		showLog(fs.Args())
+		return
+	case edit:
+		if len(fs.Args()) != 1 {
+			die("usage: go-at --edit JOB   (JOB is a number or a name)")
+		}
+		msg, err := openSpool().EditJob(fs.Arg(0))
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Fprintln(os.Stderr, msg)
 		return
 	}
 

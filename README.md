@@ -98,6 +98,24 @@ process is still the job (still a group leader, same start time on Linux), so
 a stale pid file can never get an unrelated process killed. Scripts can also use
 the `AT_JOB_ID` and `AT_JOB_NAME` variables every job gets.
 
+## Editing a queued job
+
+    go-at --edit steelers-arr      # or the job number
+
+Opens the job's commands in `$VISUAL`, else `$EDITOR`, else `editor`/`nano`/`vi`
+(the value may include arguments, e.g. `EDITOR="nano -l"`). Only your commands
+are shown; the time, name, environment and working directory captured at
+submission are kept as they were. Save and quit to apply.
+
+- Quitting without changes prints "no changes". An empty result or an editor
+  that exits non-zero leaves the job untouched.
+- Only queued/waiting jobs can be edited. If the job starts while you are
+  still in the editor, nothing is applied and your text is saved to
+  `<spool>/edit-<id>.rejected` so it is not lost.
+- The temp file lives in a private (0700) directory and is removed afterwards.
+- It does not change the run time: remove and resubmit for that.
+- Tested against real nano 7.2 on a pty.
+
 ## Priority and batch
 
 - `--nice N` (0 to 19): run at lower priority; shown as `nice=N`.
@@ -253,6 +271,13 @@ Status against the classic option set (taken from the `at(1)` man page):
 | `-V` | print the version | missing | add |
 | `-M` | never mail | missing | accept as a no-op (go-at never mails) |
 | `-m`, `-u user` | mail on completion; mail recipient | missing | fail with "mail is not supported" |
+
+Ideas taken from reviewing other `at` rewrites (not built): `--max-late
+DURATION` to skip a job that is overdue by more than that (recorded as a
+`skipped` state); changing a queued job's run time; history filters
+(`--since/--until/--state/--name`); a man page and shell completions;
+`--count`; a syntax check (`bash -n`) on `--edit` save; and, only if ever
+needed, a documented system-wide mode.
 
 Also planned: an opt-in `--classic` flag for `go-atq` that prints the old
 one-line format for scripts that parse it (the default stays plain words);
