@@ -27,7 +27,11 @@ What's different, on purpose:
     make test                 # go vet + unit and end-to-end tests
     make install              # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
 
-Needs Go to build (tested with 1.24 and newer). Make sure `~/.local/bin` is on
+Needs Go to build (tested with 1.24 and newer). For a fully static binary that
+needs no libc (handy on seedboxes and minimal containers) use `make static`
+instead of `make`, then `make install`; cross-compile with e.g.
+`GOARCH=arm64 make static`. A plain `go build` links libc dynamically, because
+Go's `os/user` uses cgo when it is available; check with `ldd go-at`. Make sure `~/.local/bin` is on
 your `PATH`. If you want the classic names, symlink them yourself
 (`ln -s go-at ~/.local/bin/at`); the binary answers to either spelling.
 
@@ -216,12 +220,45 @@ Where this differs from Debian `at`, each on purpose:
   directory and `umask` at submission are restored. `go-at -c` prints the exact
   script. The spool is private to you (`0700`), but the script holds your
   environment, including any secrets in it.
-- **Output** goes to a log file; **no mail.** Put a notification in the job.
+- **Output** goes to a log file; **no mail.** (Classic `at` emails a job's
+  output to the local user through the system's mail program, which on most
+  modern machines goes nowhere.) Put a notification in the job if you want one.
 - **Late jobs.** A job that came due while the daemon was down runs as soon as
   it starts.
 - **Options:** `-n/--name`, `--nice`, `-b/--batch`, `-s`, `-f`, `-l`, `-d`/`-r`,
   `-c`, `--log`, `-a/--all`, `--json`, and `go-atrm -k/-s`. Everything else in
   `at(1)` (`-m`, `-v`, `-t`, `-V`, ...) is not implemented.
+
+## Compatibility roadmap
+
+Goal: someone who knows `at` can switch without relearning it. Rules:
+
+1. A classic flag either works as it always did, is an alias for a better
+   spelling, or **fails loudly** and says what to use instead. It is never
+   silently ignored or given a different meaning.
+2. New features get long names first (`--name`, `--nice`), so the short-flag
+   space stays classic.
+3. Every classic flag gets a test, so the command set cannot drift quietly.
+
+Status against the classic option set (taken from the `at(1)` man page):
+
+| classic | meaning | go-at today | plan |
+| :- | :- | :- | :- |
+| `-f file`, `-c`, `-r`, `-d`, `-b` | read job from file; print job; remove; batch | works as classic | keep |
+| `-l` | list jobs | works, but `at -l 5` ignores the `5` (breaks rule 1) | list only the named jobs |
+| `-q letter` | queue; niceness is 2 x (letter - a); uppercase also gets batch rules | refused, with a message | accept; map to `--nice` / `--batch` |
+| `-t [[CC]YY]MMDDhhmm[.ss]` | absolute time (POSIX) | missing | add |
+| `-o fmt` | time format for the listing | missing | add |
+| `-v` | show the run time before reading the job | missing | add |
+| `-V` | print the version | missing | add |
+| `-M` | never mail | missing | accept as a no-op (go-at never mails) |
+| `-m`, `-u user` | mail on completion; mail recipient | missing | fail with "mail is not supported" |
+
+Also planned: an opt-in `--classic` flag for `go-atq` that prints the old
+one-line format for scripts that parse it (the default stays plain words);
+bare-digit dates such as `MMDDYY` in time specs; and `--shell` as the main
+spelling of `-s SHELL`, the one short flag go-at invented, which older `at`
+versions used differently.
 
 ## Terminal safety
 
