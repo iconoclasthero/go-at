@@ -67,6 +67,15 @@ func main() {
 			name, args = strings.TrimPrefix(args[0], "go-"), args[1:]
 		}
 	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "-h" || a == "--help" || a == "-help" {
+			fmt.Print(helpText)
+			return
+		}
+	}
 	switch name {
 	case "atq":
 		cmdList(args)
@@ -113,7 +122,6 @@ const atUsage = `usage: go-at [options] TIME...        schedule commands (typed 
 
        go-at -l | go-atq [-a|--all] [--json]   list jobs: queued, waiting, running (--all adds ended ones)
        go-at -c JOB                             print the script of a queued or running job
-       go-at --edit JOB                         change a queued job's commands in $VISUAL / $EDITOR
        go-at --log JOB                          print a job's output
        go-atrm JOB...                           remove queued jobs
        go-atrm -k [-s SIGNAL] JOB...            stop running jobs (default signal TERM)
@@ -136,7 +144,7 @@ func cmdAt(args []string) {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, atUsage) }
 	var name, file, shellFlag string
 	var nice int
-	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit bool
+	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit, compose bool
 	fs.StringVar(&name, "n", "", "")
 	fs.StringVar(&name, "name", "", "")
 	fs.IntVar(&nice, "nice", 0, "")
@@ -153,6 +161,9 @@ func cmdAt(args []string) {
 	fs.BoolVar(&asJSON, "json", false, "")
 	fs.BoolVar(&showLogFlag, "log", false, "")
 	fs.BoolVar(&edit, "edit", false, "")
+	fs.BoolVar(&edit, "e", false, "")
+	fs.BoolVar(&compose, "compose", false, "")
+	fs.BoolVar(&compose, "C", false, "")
 	oldQueue := fs.String("q", "", "")
 	fs.Parse(args)
 
@@ -205,7 +216,23 @@ func cmdAt(args []string) {
 	}
 
 	shell := resolveShell(shellFlag)
-	commands := readCommands(file, runAt)
+	var commands string
+	if compose {
+		if file != "" {
+			die("--compose and -f cannot be used together")
+		}
+		editor, err := editorCommand("--compose")
+		if err != nil {
+			die("%v", err)
+		}
+		sp := openSpool()
+		commands, err = editText(editor, "", "go-at-new-job.sh", shell, sp.path("compose.rejected"))
+		if err != nil {
+			die("%v; job not created", err)
+		}
+	} else {
+		commands = readCommands(file, runAt)
+	}
 	if strings.TrimSpace(commands) == "" {
 		die("no commands given; job not created")
 	}
@@ -261,6 +288,14 @@ func readCommands(file string, runAt time.Time) string {
 // or panic, by die(), and by the signal handler below. Only SIGKILL (which no
 // program can catch) can leave the terminal raw; `stty sane` fixes that.
 func readInteractive(runAt time.Time) (cmds string, cancelled bool) {
+	fmt.Fprint(os.Stderr, "Press Ctrl-D to close and save; Ctrl-C to abort.\n")
+	if ed := strings.TrimSpace(os.Getenv("VISUAL")); ed != "" {
+		fmt.Fprintf(os.Stderr, "Restart with --compose to use %s.\n", ed)
+	} else if ed := strings.TrimSpace(os.Getenv("EDITOR")); ed != "" {
+		fmt.Fprintf(os.Stderr, "Restart with --compose to use %s.\n", ed)
+	} else {
+		fmt.Fprint(os.Stderr, "Restart with --compose to use editor set in \"$VISUAL\" then \"$EDITOR\".\n")
+	}
 	fmt.Fprintf(os.Stderr, "at %s\n", runAt.Format(timeFmt+" MST"))
 	restore, err := makeRaw(int(os.Stdin.Fd()))
 	if err != nil {

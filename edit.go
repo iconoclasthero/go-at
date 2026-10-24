@@ -15,7 +15,7 @@ package main
 // the edited text is saved to a file so it is never lost.
 
 import (
-	"errors"
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,21 +38,103 @@ func splitJobScript(script string) (head, cmds string, ok bool) {
 	return script[:n], script[n:], true
 }
 
-// editorCommand picks $VISUAL, then $EDITOR, then the first of editor, nano, vi
-// that exists. The value may carry arguments ("code -w", "nano -l"), so it is
-// run through sh and gets the file as "$1".
-func editorCommand() string {
+// editorCommand returns $VISUAL, else $EDITOR. The value may carry arguments
+// ("code -w", "nano -l"), so it is run through sh and gets the file as "$1".
+// flag is the option that needs it, for the error message.
+func editorCommand(flag string) (string, error) {
 	for _, v := range []string{"VISUAL", "EDITOR"} {
 		if e := strings.TrimSpace(os.Getenv(v)); e != "" {
-			return e
+			return e, nil
 		}
 	}
-	for _, e := range []string{"editor", "nano", "vi"} {
-		if p, err := exec.LookPath(e); err == nil {
-			return p
+	return "", fmt.Errorf(`%s uses the value of "$VISUAL" falling back to "$EDITOR" but neither of these is set. You can specify it on the command line, e.g.,
+  $ VISUAL=/usr/bin/nano go-at %s ...
+or set it in e.g. ~/.bashrc`, flag, flag)
+}
+
+// syntaxErrors runs "<shell> -n" over text and returns its complaints, or "".
+func syntaxErrors(shell, dir, text string) string {
+	switch filepath.Base(shell) {
+	case "bash", "sh", "dash", "zsh", "ksh", "mksh":
+	default:
+		return ""
+	}
+	p := filepath.Join(dir, "syntax-check")
+	if os.WriteFile(p, []byte(text), 0o600) != nil {
+		return ""
+	}
+	defer os.Remove(p)
+	out, err := exec.Command(shell, "-n", p).CombinedOutput()
+	if err == nil {
+		return ""
+	}
+	msg := strings.ReplaceAll(string(out), p, "line")
+	msg = strings.ReplaceAll(msg, "line: line ", "line ")
+	return strings.TrimSpace(msg)
+}
+
+// editText opens initial in the editor and returns what the user saved. After
+// each save the commands get a "shell -n" syntax check; on a problem a person
+// at a terminal may edit again, save anyway or abort. Anything not applied is
+// written to keep (if given) so typed work is never lost.
+func editText(editor, initial, name, shell, keep string) (string, error) {
+	dir, err := os.MkdirTemp("", "go-at-edit-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(dir, name)
+	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
+		return "", err
+	}
+	save := func(text string) string {
+		if keep == "" || strings.TrimSpace(text) == "" {
+			return ""
+		}
+		if os.WriteFile(keep, []byte(text), 0o600) != nil {
+			return ""
+		}
+		return fmt.Sprintf(" Your text is saved in %s", keep)
+	}
+	in := bufio.NewReader(os.Stdin)
+	for {
+		if err := runEditor(editor, tmp); err != nil {
+			return "", fmt.Errorf("editor %q failed (%v)", editor, err)
+		}
+		b, err := os.ReadFile(tmp)
+		if err != nil {
+			return "", fmt.Errorf("cannot read the edited file: %w", err)
+		}
+		text := string(b)
+		if text == initial || strings.TrimSpace(text) == "" {
+			return text, nil // caller reports "no changes" / "empty"
+		}
+		msg := syntaxErrors(shell, dir, text)
+		if msg == "" {
+			return text, nil
+		}
+		fmt.Fprintf(os.Stderr, "go-at: syntax problem in the commands:\n%s\n", msg)
+		if !isTerminal(int(os.Stdin.Fd())) {
+			return "", fmt.Errorf("not saved because of the syntax problem.%s", save(text))
+		}
+		for {
+			fmt.Fprint(os.Stderr, "[e]dit again, [s]ave anyway, [a]bort? ")
+			ans, err := in.ReadString('\n')
+			ans = strings.ToLower(strings.TrimSpace(ans))
+			if err != nil || strings.HasPrefix(ans, "a") {
+				return "", fmt.Errorf("aborted.%s", save(text))
+			}
+			if strings.HasPrefix(ans, "s") {
+				return text, nil
+			}
+			if strings.HasPrefix(ans, "e") || ans == "" {
+				break
+			}
 		}
 	}
-	return ""
 }
 
 // runEditor runs the editor on file with the real terminal attached.
@@ -87,31 +169,19 @@ func (s *Spool) EditJob(ref string) (string, error) {
 		return "", fmt.Errorf("job %s has no command section; refusing to edit", j.label())
 	}
 
-	editor := editorCommand()
-	if editor == "" {
-		return "", errors.New("no editor found: set $VISUAL or $EDITOR")
-	}
-	dir, err := os.MkdirTemp("", "go-at-edit-")
+	editor, err := editorCommand("--edit")
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(dir)
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return "", err
+	shell := "bash"
+	if first, _, _ := strings.Cut(string(raw), "\n"); strings.HasPrefix(first, "#!") {
+		shell = strings.TrimSpace(strings.TrimPrefix(first, "#!"))
 	}
-	tmp := filepath.Join(dir, fmt.Sprintf("go-at-job-%d.sh", j.ID))
-	if err := os.WriteFile(tmp, []byte(orig), 0o600); err != nil {
-		return "", err
-	}
-
-	if err := runEditor(editor, tmp); err != nil {
-		return "", fmt.Errorf("editor %q failed (%v); job %s left unchanged", editor, err, j.label())
-	}
-	b, err := os.ReadFile(tmp)
+	saved := s.path(fmt.Sprintf("edit-%d.rejected", j.ID))
+	edited, err := editText(editor, orig, fmt.Sprintf("go-at-job-%d.sh", j.ID), shell, saved)
 	if err != nil {
-		return "", fmt.Errorf("cannot read the edited file: %w; job %s left unchanged", err, j.label())
+		return "", fmt.Errorf("%v; job %s left unchanged", err, j.label())
 	}
-	edited := string(b)
 	if edited == orig {
 		return fmt.Sprintf("job %s: no changes", j.label()), nil
 	}
@@ -135,7 +205,6 @@ func (s *Spool) EditJob(ref string) (string, error) {
 		curHead, curCmds, ok = splitJobScript(string(cur))
 	}
 	if err != nil || !ok || curCmds != orig {
-		saved := s.path(fmt.Sprintf("edit-%d.rejected", j.ID))
 		os.WriteFile(saved, []byte(edited), 0o600)
 		why := "it started running (or was removed)"
 		if err == nil && ok {

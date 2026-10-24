@@ -146,6 +146,10 @@ func (d *daemon) launch(j Job) {
 		return
 	}
 	cmd := exec.Command(claimed)
+	// The job gets exactly the environment captured at submission (it exports
+	// it itself), never the daemon's: under supervisord/systemd that would
+	// leak root's or the service manager's variables into the job.
+	cmd.Env = []string{}
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // own session: pid == pgid
 	started := time.Now()

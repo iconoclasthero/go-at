@@ -179,3 +179,86 @@ func TestEditedJobRuns(t *testing.T) {
 	defer stop()
 	waitFor(t, "edited job ran", 15e9, func() bool { b, _ := os.ReadFile(out); return strings.TrimSpace(string(b)) == "new" })
 }
+
+func TestComposeCreatesJob(t *testing.T) {
+	e := newEnv(t)
+	e.extra = []string{"VISUAL=", "EDITOR=" + fakeEditor(t, `printf 'echo composed\n' > "$f"`)}
+	_, se, code := e.run("", "at", "--compose", "--name", "cmp", "now", "+", "1", "hour")
+	if code != 0 || !strings.Contains(se, "job ") {
+		t.Fatalf("%d %s", code, se)
+	}
+	if s := e.script("cmp"); !strings.HasSuffix(s, "# ---- user commands ----\necho composed\n") {
+		t.Errorf("composed commands missing:\n%s", s)
+	}
+	// -C is the short form; an empty buffer creates nothing
+	e.extra = []string{"VISUAL=" + fakeEditor(t, `true`)}
+	if _, se, code := e.run("", "at", "-C", "now", "+", "1", "hour"); code == 0 || len(e.jobs()) != 1 {
+		t.Errorf("empty compose should not create a job: %d %q", code, se)
+	}
+	if _, _, code := e.run("", "at", "--compose", "-f", "x", "now"); code == 0 {
+		t.Errorf("--compose with -f should fail")
+	}
+}
+
+func TestEditorUnsetMessage(t *testing.T) {
+	e := newEnv(t)
+	e.submit("true\n", "-n", "u", "now", "+", "1", "hour")
+	e.extra = []string{"VISUAL=", "EDITOR="}
+	for _, args := range [][]string{{"--compose", "now"}, {"--edit", "u"}, {"-e", "u"}} {
+		flag := strings.Replace(args[0], "-e", "--edit", 1)
+		if args[0] == "--edit" {
+			flag = "--edit"
+		}
+		_, se, code := e.run("", "at", args...)
+		if code != 1 || !strings.Contains(se, `"$VISUAL" falling back to "$EDITOR" but neither of these is set`) ||
+			!strings.Contains(se, "VISUAL=/usr/bin/nano go-at "+flag) {
+			t.Errorf("%v: %d %q", args, code, se)
+		}
+	}
+}
+
+func TestSyntaxCheckOnSave(t *testing.T) {
+	e := newEnv(t)
+	e.submit("echo fine\n", "-n", "syn", "now", "+", "1", "hour")
+	before := e.script("syn")
+	e.extra = []string{"VISUAL=" + fakeEditor(t, `printf 'if true; then\necho oops\n' > "$f"`)}
+	_, se, code := e.run("", "at", "-e", "syn")
+	if code == 0 || !strings.Contains(se, "syntax problem") || !strings.Contains(se, "line ") {
+		t.Fatalf("expected a syntax refusal: %d %q", code, se)
+	}
+	if e.script("syn") != before {
+		t.Errorf("job changed despite syntax error")
+	}
+	if b, err := os.ReadFile(filepath.Join(e.spool, "edit-"+strconv.Itoa(e.jobs()[0].ID)+".rejected")); err != nil || !strings.Contains(string(b), "echo oops") {
+		t.Errorf("text should be kept: %v", err)
+	}
+}
+
+func TestJobDoesNotInheritDaemonEnvironment(t *testing.T) {
+	e := newEnv(t)
+	out := filepath.Join(t.TempDir(), "env")
+	e.submit("env > "+out+"\n", "-n", "envjob", "now")
+	e.extra = []string{"LEAKED_FROM_DAEMON=yes"} // only the daemon sees this
+	stop, _ := e.startDaemon()
+	defer stop()
+	waitFor(t, "job ran", 15e9, func() bool { j, ok := e.job("envjob", true); return ok && j.State == stFinished })
+	b, _ := os.ReadFile(out)
+	if strings.Contains(string(b), "LEAKED_FROM_DAEMON") {
+		t.Errorf("daemon environment leaked into the job:\n%s", b)
+	}
+	if !strings.Contains(string(b), "AT_JOB_NAME=envjob") {
+		t.Errorf("job lost its own environment:\n%s", b)
+	}
+}
+
+func TestHelp(t *testing.T) {
+	e := newEnv(t)
+	for _, c := range [][]string{{"at", "--help"}, {"at", "-h"}, {"atq", "--help"}, {"atrm", "--help"}, {"atd", "--help"}} {
+		out, _, code := e.run("", c[0], c[1:]...)
+		for _, want := range []string{"--compose", "--edit", "--name", "--nice", "--batch", "go-atrm -k", "waiting", "AT_SPOOL", "terminated"} {
+			if code != 0 || !strings.Contains(out, want) {
+				t.Errorf("%v: code %d, help lacks %q", c, code, want)
+			}
+		}
+	}
+}

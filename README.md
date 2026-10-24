@@ -98,22 +98,28 @@ process is still the job (still a group leader, same start time on Linux), so
 a stale pid file can never get an unrelated process killed. Scripts can also use
 the `AT_JOB_ID` and `AT_JOB_NAME` variables every job gets.
 
-## Editing a queued job
+## Writing and editing commands in your editor
 
-    go-at --edit steelers-arr      # or the job number
+    go-at --compose --name nightly 02:00      # also -C: write the commands in $VISUAL
+    go-at --edit steelers-arr                 # also -e: change a queued job (name or number)
 
-Opens the job's commands in `$VISUAL`, else `$EDITOR`, else `editor`/`nano`/`vi`
-(the value may include arguments, e.g. `EDITOR="nano -l"`). Only your commands
-are shown; the time, name, environment and working directory captured at
-submission are kept as they were. Save and quit to apply.
+Both use `$VISUAL`, else `$EDITOR` (the value may include arguments, e.g.
+`EDITOR="nano -l"`). If neither is set you get a message saying so, with an
+example (`VISUAL=/usr/bin/nano go-at --compose ...`); there is no fallback
+editor. The interactive `at>` prompt tells you about `--compose` when you start.
 
-- Quitting without changes prints "no changes". An empty result or an editor
-  that exits non-zero leaves the job untouched.
-- Only queued/waiting jobs can be edited. If the job starts while you are
-  still in the editor, nothing is applied and your text is saved to
-  `<spool>/edit-<id>.rejected` so it is not lost.
+- **Edit** shows only your commands; the time, name, environment and working
+  directory captured at submission are kept. Quitting without changes prints
+  "no changes"; an empty result or an editor that exits non-zero leaves the job
+  untouched. Only queued/waiting jobs can be edited. If the job starts while
+  you are in the editor, nothing is applied and your text goes to
+  `<spool>/edit-<id>.rejected`. The run time cannot be changed: remove and
+  resubmit.
+- **Syntax check:** after you save, the commands get a `bash -n` check. At a
+  terminal you are asked `[e]dit again, [s]ave anyway, [a]bort`; without a
+  terminal the text is not applied and is kept in `<spool>/edit-<id>.rejected`
+  (or `compose.rejected`). Only syntax is checked, not whether commands exist.
 - The temp file lives in a private (0700) directory and is removed afterwards.
-- It does not change the run time: remove and resubmit for that.
 - Tested against real nano 7.2 on a pty.
 
 ## Priority and batch
@@ -159,18 +165,44 @@ isn't. It runs as **you**, never as root (see below).
 (`loginctl enable-linger $USER` keeps it alive after you log out). As root you
 can instead run a system unit with `User=you` and avoid `--user` sessions.
 
-**supervisord** (one entry per user; root or you edit it):
+**supervisord** (one entry per user). supervisord must itself run as root for
+`user=` to take effect (note the lowercase `user=`; `User=` is the systemd
+spelling). Put this in e.g. `/etc/supervisor/conf.d/go-atd.conf` (the directory
+your main config `[include]`s), then
+`sudo supervisorctl reread && sudo supervisorctl update`:
 
     [program:go-atd]
-    command=/home/you/.local/bin/go-atd
+    command=/usr/local/bin/go-atd
     user=you
-    environment=AT_SPOOL="/home/you/.local/state/at"
+    directory=/home/you
+    environment=HOME="/home/you",USER="you",LOGNAME="you"
     autostart=true
     autorestart=true
-    startsecs=1
+    startsecs=3
+    stopsignal=TERM
+    stopwaitsecs=30
+    stdout_logfile=/home/you/.local/state/at/supervisor.out.log
+    stderr_logfile=/home/you/.local/state/at/supervisor.err.log
+    stdout_logfile_maxbytes=1MB
+    stderr_logfile_maxbytes=1MB
+    stdout_logfile_backups=2
+    stderr_logfile_backups=2
 
-Use the foreground command (no `-d`, and there is no `-f`), and make `AT_SPOOL`
-match the spool your login shell uses.
+- Use the foreground command: no `-d` (supervisord must own the process).
+- Set `HOME` (or `AT_SPOOL`) so the daemon and your login shell agree on the
+  spool; otherwise jobs queue and never run.
+- Paths in supervisord configs must be absolute (`~` is not expanded), and the
+  log directory must exist before the program starts
+  (`mkdir -p ~/.local/state/at`). supervisord opens the log files as root, so
+  they end up root-owned; use `stdout_logfile=NONE` to skip them, since
+  `<spool>/atd.log` has the daemon's own messages.
+- A SIGTERM waits for running jobs; supervisord sends SIGKILL after
+  `stopwaitsecs`, which does not kill jobs (they run in their own sessions).
+- Check: `ps -o user,pid,cmd -C go-atd` shows you, not root; then, as you,
+  `go-at --name smoke now + 1 minute` and `go-atq`.
+- **Environment:** a job gets exactly the environment captured when you
+  submitted it, never the daemon's. (Earlier builds let supervisord's own
+  variables leak into jobs.)
 
 **Neither** (plain shared host): let cron be the watchdog. `go-atd -d` takes a
 lock, so at most one daemon ever runs, and it does nothing while one is alive:
@@ -276,7 +308,7 @@ Ideas taken from reviewing other `at` rewrites (not built): `--max-late
 DURATION` to skip a job that is overdue by more than that (recorded as a
 `skipped` state); changing a queued job's run time; history filters
 (`--since/--until/--state/--name`); a man page and shell completions;
-`--count`; a syntax check (`bash -n`) on `--edit` save; and, only if ever
+`--count`; and, only if ever
 needed, a documented system-wide mode.
 
 Also planned: an opt-in `--classic` flag for `go-atq` that prints the old
