@@ -37,24 +37,24 @@ your `PATH`. If you want the classic names, symlink them yourself
 
 ## Example: wait for something, then poll until it appears
 
-    $ go-at --name steelers-arr 2026-10-25 09:30 + 2 hours 55 minutes
+    $ go-at --name task-name 2026-10-25 09:30 + 2 hours 55 minutes
     at Sun Oct 25 12:25:00 2026 EDT
-    at> until steelers-arr; do sleep 60; ((++i)); printf %s\\n "$i"; done
+    at> until task-name; do sleep 60; ((++i)); printf %s\\n "$i"; done
     at> <Ctrl-D>
-    job 10 (steelers-arr) at Sun Oct 25 12:25:00 2026 EDT
+    job 10 (task-name) at Sun Oct 25 12:25:00 2026 EDT
 
     $ go-atq
     ID  NAME          STATE    WHEN                              DETAIL
-    10  steelers-arr  running  started Sun Oct 25 12:25:00 2026  pgid 48213
+    10  task-name  running  started Sun Oct 25 12:25:00 2026  pgid 48213
 
-    $ go-atrm -k steelers-arr         # stops the loop and its sleep
-    sent SIGTERM to job 10 (steelers-arr); process group 48213
+    $ go-atrm -k task-name         # stops the loop and its sleep
+    sent SIGTERM to job 10 (task-name); process group 48213
 
     $ go-atq --all
     ID  NAME          STATE       WHEN                            DETAIL
-    10  steelers-arr  terminated  ended Sun Oct 25 14:02:11 2026  SIGTERM, ran 1h37m11s
+    10  task-name  terminated  ended Sun Oct 25 14:02:11 2026  SIGTERM, ran 1h37m11s
 
-    $ go-at --log steelers-arr        # everything the job printed
+    $ go-at --log task-name        # everything the job printed
 
 ## States
 
@@ -78,7 +78,7 @@ future UI: one object per job with `id`, `name`, `state`, `scheduled`,
 ## Names and ids
 
 A job has a number (assigned in order, just a handle) and optionally a name.
-Anywhere a job is expected you can use either: `go-atrm steelers-arr`,
+Anywhere a job is expected you can use either: `go-atrm task-name`,
 `go-at -c 10`. Names start with a letter (so they can't be mistaken for numbers
 or options), may contain letters, digits, `.`, `_`, `-`, and must be unique
 among queued and running jobs.
@@ -135,7 +135,7 @@ that exits just before the signal arrives.
 ## Writing and editing commands in your editor
 
     go-at --compose --name nightly 02:00      # also -C: write the commands in $VISUAL
-    go-at --edit steelers-arr                 # also -e: change a queued job (name or number)
+    go-at --edit task-name                 # also -e: change a queued job (name or number)
 
 Both use `$VISUAL`, else `$EDITOR` (the value may include arguments, e.g.
 `EDITOR="nano -l"`). If neither is set you get a message saying so, with an
