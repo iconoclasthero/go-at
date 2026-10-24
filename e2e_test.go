@@ -516,6 +516,18 @@ func spawnSession(t *testing.T) int {
 	return c.Process.Pid
 }
 
+// writeProcFiles records pid the way the daemon does, including its real start time.
+func writeProcFiles(t *testing.T, e *env, id, pid int) {
+	t.Helper()
+	ticks, ok := procStartTicks(pid)
+	if !ok {
+		t.Skip("no /proc start times on this system")
+	}
+	os.WriteFile(filepath.Join(e.spool, "running", fmt.Sprintf("%d.proc", id)),
+		[]byte(fmt.Sprintf("pid=%d\nstarted=%d\nstartticks=%d\n", pid, time.Now().Unix(), ticks)), 0o600)
+	os.WriteFile(filepath.Join(e.spool, "running", fmt.Sprintf("%d.pid", id)), []byte(strconv.Itoa(pid)+"\n"), 0o600)
+}
+
 func writeRunning(t *testing.T, e *env, id int, extra ...string) {
 	t.Helper()
 	body := fmt.Sprintf("#!/bin/bash\n# atjob id=%d run=1 created=1 user=x nice=0 batch=0 name=orphan%d\nsleep 300\n", id, id)
@@ -559,7 +571,7 @@ func TestLiveOrphanIsLeftAlone(t *testing.T) {
 	e := newEnv(t)
 	pid := spawnSession(t)
 	writeRunning(t, e, 8)
-	os.WriteFile(filepath.Join(e.spool, "running", "8.pid"), []byte(strconv.Itoa(pid)+"\n"), 0o600)
+	writeProcFiles(t, e, 8, pid)
 	stop, se := e.startDaemon()
 	defer stop()
 	time.Sleep(2500 * time.Millisecond) // several sweeps

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -277,7 +278,7 @@ func (d *daemon) sweep() {
 		if err != nil {
 			continue
 		}
-		if pid, ok := s.liveJobPID(id); ok {
+		if pid, err := s.verifyJobPID(id); err == nil || errors.Is(err, errUnverified) {
 			if !d.seen[id] {
 				d.seen[id] = true
 				fmt.Fprintf(os.Stderr, "go-atd: job %s is still running from a previous daemon (process group %d); leaving it alone\n", j.label(), pid)

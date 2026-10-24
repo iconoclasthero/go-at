@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -36,20 +37,21 @@ const (
 )
 
 type Job struct {
-	ID        int        `json:"id"`
-	Name      string     `json:"name,omitempty"`
-	State     string     `json:"state"`
-	User      string     `json:"user"`
-	Created   time.Time  `json:"created"`
-	Scheduled time.Time  `json:"scheduled"`
-	Started   *time.Time `json:"started,omitempty"`
-	Ended     *time.Time `json:"ended,omitempty"`
-	PGID      int        `json:"pgid,omitempty"`
-	Nice      int        `json:"nice,omitempty"`
-	Batch     bool       `json:"batch,omitempty"`
-	ExitCode  *int       `json:"exit_code,omitempty"`
-	Signal    string     `json:"signal,omitempty"`
-	Log       string     `json:"log,omitempty"`
+	ID         int        `json:"id"`
+	Name       string     `json:"name,omitempty"`
+	State      string     `json:"state"`
+	User       string     `json:"user"`
+	Created    time.Time  `json:"created"`
+	Scheduled  time.Time  `json:"scheduled"`
+	Started    *time.Time `json:"started,omitempty"`
+	Ended      *time.Time `json:"ended,omitempty"`
+	PGID       int        `json:"pgid,omitempty"`
+	Unverified bool       `json:"pid_unverified,omitempty"`
+	Nice       int        `json:"nice,omitempty"`
+	Batch      bool       `json:"batch,omitempty"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	Signal     string     `json:"signal,omitempty"`
+	Log        string     `json:"log,omitempty"`
 
 	path string // script file while queued or running
 }
@@ -159,8 +161,11 @@ func (s *Spool) readProc(id int) procInfo {
 // procStartTicks returns the process start time in clock ticks since boot
 // (Linux /proc). On systems without /proc it reports false and callers fall
 // back to weaker checks.
+// procStatFmt is a variable so tests can simulate an unreadable /proc entry.
+var procStatFmt = "/proc/%d/stat"
+
 func procStartTicks(pid int) (uint64, bool) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	b, err := os.ReadFile(fmt.Sprintf(procStatFmt, pid))
 	if err != nil {
 		return 0, false
 	}
@@ -177,30 +182,63 @@ func procStartTicks(pid int) (uint64, bool) {
 	return v, err == nil
 }
 
-// liveJobPID returns the job's process-group id if, and only if, that process
-// still exists, still leads its own group, and (where we can tell) was started
-// when we recorded it, so a recycled PID is never mistaken for the job.
-func (s *Spool) liveJobPID(id int) (int, bool) {
+var (
+	errNotRunning = errors.New("its process is no longer running")
+	errUnverified = errors.New("its process identity could not be verified")
+)
+
+// haveProc reports whether /proc process start times are available (Linux).
+func haveProc() bool {
+	_, err := os.Stat("/proc/self/stat")
+	return err == nil
+}
+
+// verifyJobPID returns the job's process-group id only when it is certain the
+// process is the one we started. It fails closed: where /proc exists (Linux),
+// the .proc file must hold a nonzero recorded start time AND the live
+// /proc/PID/stat start time must be readable and equal to it. Any doubt means
+// no signal is ever sent. Without /proc (e.g. macOS) the start-time proof is
+// impossible, so the weaker fallback applies: the pid exists and leads its own
+// process group. That cannot rule out a recycled pid.
+//
+// Errors: errNotRunning (gone, or the pid now belongs to something else) and
+// errUnverified (a process is there but we cannot prove it is the job).
+// The caller must still tolerate the process vanishing before it signals.
+func (s *Spool) verifyJobPID(id int) (int, error) {
 	b, err := os.ReadFile(s.pidPath(id))
 	if err != nil {
-		return 0, false
+		return 0, errNotRunning
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 1 {
-		return 0, false
+		return 0, errNotRunning
 	}
 	if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
-		return 0, false
+		return 0, errNotRunning
 	}
 	if pg, err := syscall.Getpgid(pid); err != nil || pg != pid {
-		return 0, false
+		return 0, errNotRunning
 	}
-	if want := s.readProc(id).ticks; want != 0 {
-		if got, ok := procStartTicks(pid); ok && got != want {
-			return 0, false
+	if haveProc() {
+		want := s.readProc(id).ticks
+		if want == 0 {
+			return 0, fmt.Errorf("%w (no start time was recorded for it)", errUnverified)
+		}
+		got, ok := procStartTicks(pid)
+		if !ok {
+			return 0, fmt.Errorf("%w (cannot read /proc/%d/stat)", errUnverified, pid)
+		}
+		if got != want {
+			return 0, errNotRunning // the pid was reused by another process
 		}
 	}
-	return pid, true
+	return pid, nil
+}
+
+// liveJobPID is verifyJobPID for callers that only need yes or no.
+func (s *Spool) liveJobPID(id int) (int, bool) {
+	pid, err := s.verifyJobPID(id)
+	return pid, err == nil
 }
 
 // ---- history records -------------------------------------------------------

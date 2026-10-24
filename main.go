@@ -363,7 +363,9 @@ func describe(j Job) (when, detail string) {
 		} else {
 			when = "starting"
 		}
-		if j.PGID > 0 {
+		if j.Unverified {
+			parts = append(parts, "process identity unverified; go-atrm -k will refuse")
+		} else if j.PGID > 0 {
 			parts = append(parts, fmt.Sprintf("pgid %d", j.PGID))
 		}
 	case stInterrupted:
@@ -493,9 +495,9 @@ func removeJobs(refs []string, kill bool, sigStr string) {
 		if kill {
 			switch j.State {
 			case stRunning:
-				pid, ok := sp.liveJobPID(j.ID)
-				if !ok {
-					fail("job %s: its process is no longer running", j.label())
+				pid, err := sp.verifyJobPID(j.ID)
+				if err != nil {
+					fail("job %s: %v; nothing was signalled", j.label(), err)
 					continue
 				}
 				// negative pid = the whole process group: the shell and everything it started

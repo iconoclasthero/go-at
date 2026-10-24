@@ -27,7 +27,7 @@ What's different, on purpose:
     make test                 # go vet + unit and end-to-end tests
     make install              # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
 
-Needs Go to build (tested with 1.24 and newer). For a fully static binary that
+Needs Go **1.24.7 or newer** to build (the `go` line in `go.mod`; no older release is supported). Prefer a currently supported Go release for security fixes. For a fully static binary that
 needs no libc (handy on seedboxes and minimal containers) use `make static`
 instead of `make`, then `make install`; cross-compile with e.g.
 `GOARCH=arm64 make static`. A plain `go build` links libc dynamically, because
@@ -93,10 +93,44 @@ your `until` loop and every `sleep` it starts share that group. Use it directly:
 
 or let go-atrm do it: `go-atrm -k NAME` sends SIGTERM to the whole group
 (`-s KILL`, `-s INT`, `-s 1`... to choose). Plain `go-atrm` only removes queued
-jobs and refuses to touch a running one. Before signalling, `-k` checks that the
-process is still the job (still a group leader, same start time on Linux), so
-a stale pid file can never get an unrelated process killed. Scripts can also use
-the `AT_JOB_ID` and `AT_JOB_NAME` variables every job gets.
+jobs and refuses to touch a running one. Scripts can also use the `AT_JOB_ID`
+and `AT_JOB_NAME` variables every job gets.
+
+### What "finished" means, and background processes
+
+- **A job is finished when its shell exits.** The daemon does not wait for
+  other processes the job started. `sleep 300 &` as the last line gives a job
+  that finishes immediately while the `sleep` keeps going.
+- **Background processes are the script's responsibility.** Anything a job
+  deliberately leaves running (`&`, `nohup`, `setsid`, daemons) can outlive the
+  job. If you want a job to stay "running" until its work is done, run it in
+  the foreground or end the script with `wait`.
+- **`-k` only reaches a running job.** It signals the job's process group, which
+  includes background children *while the shell is still running*. The pid
+  records are deleted when the shell exits, so after that the job is
+  `finished`, `go-atrm -k` refuses, and go-at no longer tracks leftover
+  descendants. (A script that must be killable afterwards should record its own
+  pids.)
+
+### When `-k` refuses to signal (fail closed)
+
+Before sending anything, `-k` has to prove that the recorded pid is still the
+process the daemon started, because the OS may have reused the number. On
+Linux all of these must hold:
+
+1. the pid exists and leads its own process group;
+2. `<spool>/running/<id>.proc` holds a valid, nonzero recorded start time;
+3. the live `/proc/<pid>/stat` start time can be read and equals it.
+
+If any of that cannot be established, **nothing is signalled**. A mismatch
+means the pid now belongs to something else, and `-k` says the job is no longer
+running; a missing, unreadable or invalid record is reported as "its process
+identity could not be verified; nothing was signalled", and `go-atq` shows
+that job as running with "process identity unverified". Without `/proc` (macOS)
+the start-time proof is impossible, so only the first check applies, which
+**cannot rule out a recycled pid**. This guards against signalling the wrong
+process; it is not a guarantee against every race, and `-k` handles a process
+that exits just before the signal arrives.
 
 ## Writing and editing commands in your editor
 
@@ -329,6 +363,6 @@ SIGKILL can leave it raw; run `stty sane` or `reset` if that happens.
 - Character widths use a built-in approximation of `wcwidth` (CJK and emoji are
   2 columns, combining marks 0); unusual scripts and ZWJ emoji sequences can
   still misplace the cursor. Tab does nothing (no completion).
-- Process verification before `-k` uses Linux `/proc`; elsewhere it falls back
-  to the weaker group-leader check.
+- Process verification before `-k` uses Linux `/proc` start times and fails
+  closed; elsewhere only the weaker group-leader check exists (see above).
 - Linux is tested. macOS cross-compiles but is untested; no BSD support.

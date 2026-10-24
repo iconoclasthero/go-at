@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -326,8 +327,11 @@ func (s *Spool) Running() ([]Job, error) {
 			continue
 		}
 		j.Log = s.path("logs", e.Name()+".log")
-		if pid, ok := s.liveJobPID(j.ID); ok {
-			j.State, j.PGID = stRunning, pid
+		pid, verr := s.verifyJobPID(j.ID)
+		if verr == nil || errors.Is(verr, errUnverified) {
+			// alive; if its identity cannot be proven we show no pid and
+			// go-atrm -k will refuse rather than guess
+			j.State, j.PGID, j.Unverified = stRunning, pid, verr != nil
 			if pi := s.readProc(j.ID); !pi.started.IsZero() {
 				j.Started = tp(pi.started)
 			}
