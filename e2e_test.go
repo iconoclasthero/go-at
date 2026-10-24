@@ -313,7 +313,7 @@ func TestNiceAndBatch(t *testing.T) {
 	}
 	e.run("", "atrm", strconv.Itoa(bid))
 	// a due batch job on a busy machine says "waiting", not a letter
-	e.extra = []string{"AT_BATCH_LOAD=0.000001"}
+	e.extra = []string{"AT_BATCH_LOAD=0"}
 	e.submit("true\n", "--batch", "now")
 	if out, _, _ := e.run("", "atq"); !strings.Contains(out, "waiting") || !strings.Contains(out, "waiting for load below") {
 		t.Errorf("due batch job under load should read 'waiting':\n%s", out)

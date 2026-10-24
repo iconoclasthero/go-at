@@ -16,7 +16,7 @@ import (
 // batchLoadLimit: --batch jobs wait until the 1-minute load average is below
 // this. Override with AT_BATCH_LOAD.
 func batchLoadLimit() float64 {
-	if v, err := strconv.ParseFloat(os.Getenv("AT_BATCH_LOAD"), 64); err == nil && v > 0 {
+	if v, err := strconv.ParseFloat(os.Getenv("AT_BATCH_LOAD"), 64); err == nil && v >= 0 {
 		return v
 	}
 	return 1.5
@@ -38,7 +38,7 @@ func loadAvg() float64 {
 // keepDays: how long records of ended jobs (and their logs) are kept.
 // Override with AT_KEEP_DAYS.
 func keepDays() int {
-	if v, err := strconv.Atoi(os.Getenv("AT_KEEP_DAYS")); err == nil && v > 0 {
+	if v, err := strconv.Atoi(os.Getenv("AT_KEEP_DAYS")); err == nil && v >= 0 {
 		return v
 	}
 	return 30

@@ -277,7 +277,7 @@ Per-user spool: `$AT_SPOOL`, else `$XDG_STATE_HOME/at`, else `~/.local/state/at`
 | `AT_SPOOL` | spool directory |
 | `AT_SHELL` | shell for jobs (default `bash`) |
 | `AT_AUTOSTART=1` | `go-at` starts the daemon when none runs |
-| `AT_BATCH_LOAD` | load-average limit for `--batch` (default 1.5) |
+| `AT_BATCH_LOAD` | load-average limit for `--batch` (default 1.5; 0 holds batch jobs until raised) |
 | `AT_KEEP_DAYS` | how long ended-job records and logs are kept (default 30) |
 | `AT_JOB_ID`, `AT_JOB_NAME` | set inside every job |
 
