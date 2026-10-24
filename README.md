@@ -23,7 +23,7 @@ What's different, on purpose:
 
 ## Install
 
-    cd go-at
+    git clone https://github.com/iconoclasthero/go-at && cd go-at
     make test                 # go vet + unit and end-to-end tests
     make install              # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
 
