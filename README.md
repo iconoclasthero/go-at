@@ -32,7 +32,8 @@ What's different, on purpose:
 Needs Go **1.24.7 or newer** to build (the `go` line in `go.mod`; no older release is supported). Prefer a currently supported Go release for security fixes. For a fully static binary that
 needs no libc (handy on seedboxes and minimal containers) use `make static`
 instead of `make`, then `make install`; cross-compile with e.g.
-`GOARCH=arm64 make static`. A plain `go build` links libc dynamically, because
+`GOARCH=arm64 make static` (`GOARCH`/`GOARM` are read by Go itself; the
+Makefile has no architecture option of its own). A plain `go build` links libc dynamically, because
 Go's `os/user` uses cgo when it is available; check with `ldd go-at`. Make sure `~/.local/bin` is on
 your `PATH`. If you want the classic names, symlink them yourself
 (`ln -s go-at ~/.local/bin/at`); the binary answers to either spelling.
@@ -262,26 +263,56 @@ status is unknown. A reboot ends the jobs too. **A job is never re-run
 automatically**: it may have partly completed, and repeating a half-finished
 download or transfer can repeat side effects. If a job must survive crashes,
 make the script itself idempotent and resumable and have it write a "succeeded"
-marker only after the last step. Interrupted scripts are kept as
-`<spool>/logs/<id>.interrupted`.
+marker only after the last step. The commands of an interrupted job are kept in
+`<spool>/history/<id>.sh`.
 
 ## Files and settings
 
-Per-user spool: `$AT_SPOOL`, else `$XDG_STATE_HOME/at`, else `~/.local/state/at`.
+Per-user spool: `spool` setting / `$AT_SPOOL`, else `$XDG_STATE_HOME/at`, else
+`~/.local/state/at`.
 
     jobs/<id>          queued job: a plain bash script (go-at -c shows it)
     running/<id>       the same script while it runs, plus <id>.pid and <id>.proc
     history/<id>.json  outcome record of an ended job
+    history/<id>.sh    the commands you typed, kept after the job ends (0600)
     logs/<id>.log      everything the job printed, with start/finish markers
 
-| variable | effect |
-| :- | :- |
-| `AT_SPOOL` | spool directory |
-| `AT_SHELL` | shell for jobs (default `bash`) |
-| `AT_AUTOSTART=1` | `go-at` starts the daemon when none runs |
-| `AT_BATCH_LOAD` | load-average limit for `--batch` (default 1.5; 0 holds batch jobs until raised) |
-| `AT_KEEP_DAYS` | how long ended-job records and logs are kept (default 30) |
-| `AT_JOB_ID`, `AT_JOB_NAME` | set inside every job |
+`go-at -c JOB` prints the full script of a queued or running job, and for an
+ended job the saved commands. Only your commands are kept after a job ends,
+**never the captured environment**, which can hold secrets (set
+`keep_commands = no` to keep nothing). They are removed with the rest of the
+job's record after `keep_days`.
+
+### Configuration
+
+Settings come from, highest priority first: a command-line flag where one
+exists (`-s SHELL`), the **environment**, the **config file**, then the default.
+
+The config file is the first of:
+
+1. `--config FILE` (any go-* command; must exist)
+2. `$AT_CONFIG` (must exist)
+3. `$XDG_CONFIG_HOME/go-at.conf`, else `~/.config/go-at.conf` (optional)
+
+Format: `key = value`, one per line; `#` starts a comment; values may be quoted;
+a leading `~/` is your home directory. Unknown keys and bad values are errors
+with the line number, so a typo is never silently ignored. See
+`go-at.conf.example`. `go-at --show-config` prints every setting, its value and
+where it came from.
+
+| config key | environment variable | default |
+| :- | :- | :- |
+| `spool` | `AT_SPOOL` | `$XDG_STATE_HOME/at`, else `~/.local/state/at` |
+| `shell` | `AT_SHELL` | `bash` |
+| `autostart` | `AT_AUTOSTART` | `no` (`go-at` starts the daemon when none runs) |
+| `batch_load` | `AT_BATCH_LOAD` | `1.5` (0 holds batch jobs until raised) |
+| `keep_days` | `AT_KEEP_DAYS` | `30` (records, logs and saved commands of ended jobs) |
+| `keep_commands` | `AT_KEEP_COMMANDS` | `yes` |
+
+Yes/no values accept yes/no, true/false, on/off, 1/0. `AT_CONFIG` is the one
+variable with no config key (it names the file). Inside every job, `AT_JOB_ID`
+and `AT_JOB_NAME` are set. The daemon reads the same file, so put `spool` there
+(or set `AT_SPOOL` for it) and your shell and the daemon always agree.
 
 ## Compatibility decisions
 

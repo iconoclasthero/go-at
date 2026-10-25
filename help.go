@@ -19,6 +19,8 @@ SCHEDULE   go-at [options] TIME...
   -C, --compose       write the commands in $VISUAL (else $EDITOR) instead of
                       at>; saved text gets a bash -n syntax check
   -f FILE             read the commands from FILE
+      --config FILE   use this config file (any go-* command)
+      --show-config   print the effective settings and where each came from
   -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
 
 CHANGE     go-at -e, --edit JOB
@@ -33,7 +35,7 @@ LIST       go-at -l | go-atq [-a|--all] [--json]
   failed, terminated, interrupted. --json is for scripts. A running job's
   DETAIL shows its pid/process group.
 
-INSPECT    go-at -c JOB      print the script of a queued or running job
+INSPECT    go-at -c JOB      print a job's script (ended jobs: the commands you typed)
            go-at --log JOB   print a job's output (also kept after it ends)
 
 STOP       go-atrm JOB...                  remove queued jobs (go-at -d / -r do the same)
@@ -61,13 +63,22 @@ TIME EXAMPLES
   weeks, months, years. Hours and smaller are elapsed time; days and larger
   keep the wall-clock time.
 
+CONFIGURATION
+  Priority: command-line flag, then environment variable, then config file,
+  then default. The config file is --config FILE, else $AT_CONFIG, else
+  $XDG_CONFIG_HOME/go-at.conf (~/.config/go-at.conf). Lines are "key = value";
+  # starts a comment. go-at --show-config prints every setting and its source.
+
+  config key     environment      default
+  spool          AT_SPOOL         $XDG_STATE_HOME/at, else ~/.local/state/at
+  shell          AT_SHELL         bash
+  autostart      AT_AUTOSTART     no   (go-at starts go-atd if it is not running)
+  batch_load     AT_BATCH_LOAD    1.5  (load average below which --batch starts)
+  keep_days      AT_KEEP_DAYS     30   (history, logs and saved commands)
+  keep_commands  AT_KEEP_COMMANDS yes  (save commands of ended jobs; go-at -c)
+
 ENVIRONMENT
-  AT_SPOOL         spool directory (default $XDG_STATE_HOME/at, else
-                   ~/.local/state/at)
-  AT_SHELL         default job shell (default bash)
-  AT_BATCH_LOAD    load average below which --batch jobs start (default 1.5)
-  AT_KEEP_DAYS     days of finished-job history to keep (default 30)
-  AT_AUTOSTART     1 = start go-atd automatically if it is not running
+  AT_CONFIG        path of the config file
   VISUAL, EDITOR   editor for --compose and --edit
   Inside a job: AT_JOB_ID and, if named, AT_JOB_NAME.
 

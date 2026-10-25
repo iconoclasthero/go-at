@@ -254,3 +254,26 @@ func (s *Spool) writeHistory(j Job) error {
 	}
 	return writeFileAtomic(s.historyPath(j.ID), append(b, '\n'), 0o600)
 }
+
+// ---- saved commands --------------------------------------------------------
+
+// history/<id>.sh holds only the commands you typed. The captured environment
+// (which can contain secrets) is never kept after a job ends.
+func (s *Spool) commandsPath(id int) string {
+	return s.path("history", strconv.Itoa(id)+".sh")
+}
+
+// saveCommands copies the user-commands part of a job script into history,
+// unless keep_commands is off.
+func (s *Spool) saveCommands(id int, scriptPath string) {
+	if !cfgBool("AT_KEEP_COMMANDS", true) {
+		return
+	}
+	b, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return
+	}
+	if _, cmds, ok := splitJobScript(string(b)); ok {
+		writeFileAtomic(s.commandsPath(id), []byte(cmds), 0o600)
+	}
+}

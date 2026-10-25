@@ -79,7 +79,8 @@ func newEnv(t *testing.T) *env {
 // cmd builds a command for "at", "atq", "atrm", "batch" or "atd".
 func (e *env) cmd(stdin string, name string, args ...string) *exec.Cmd {
 	c := exec.Command(filepath.Join(binDir, "go-"+name), args...)
-	c.Env = append(os.Environ(), "AT_SPOOL="+e.spool, "TZ=America/New_York", "AT_AUTOSTART=", "AT_SHELL=", "AT_KEEP_DAYS=")
+	c.Env = append(os.Environ(), "AT_SPOOL="+e.spool, "TZ=America/New_York", "AT_AUTOSTART=", "AT_SHELL=", "AT_KEEP_DAYS=", "AT_CONFIG=", "AT_KEEP_COMMANDS=", "AT_BATCH_LOAD=",
+		"XDG_CONFIG_HOME="+filepath.Join(e.spool, "no-config-here"), "HOME="+e.spool)
 	c.Env = append(c.Env, e.extra...)
 	c.Stdin = strings.NewReader(stdin)
 	return c
@@ -434,8 +435,8 @@ func TestFinishedAndFailed(t *testing.T) {
 	if out, _, code := e.run("", "at", "--log", "bad"); code != 0 || !strings.Contains(out, "broke") || !strings.Contains(out, "exited 3") {
 		t.Errorf("--log: %d %q", code, out)
 	}
-	if _, se, code := e.run("", "at", "-c", "bad"); code == 0 || !strings.Contains(se, "has ended") {
-		t.Errorf("-c of an ended job should explain: %d %q", code, se)
+	if out, se, code := e.run("", "at", "-c", "bad"); code != 0 || !strings.Contains(out, "broke") || strings.Contains(out, "export ") {
+		t.Errorf("-c of an ended job should print the saved commands only: %d %q %q", code, out, se)
 	}
 	if _, se, code := e.run("", "atrm", "bad"); code == 0 || !strings.Contains(se, "already failed") {
 		t.Errorf("atrm of an ended job: %d %q", code, se)
@@ -543,7 +544,7 @@ func TestCrashedJobIsNotRerun(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	writeRunning(t, e, 7)
 	os.WriteFile(filepath.Join(e.spool, "running", "7"),
-		[]byte("#!/bin/bash\n# atjob id=7 run=1 created=1 user=x nice=0 batch=0 name=crashed\ntouch "+marker+"\n"), 0o700)
+		[]byte("#!/bin/bash\n# atjob id=7 run=1 created=1 user=x nice=0 batch=0 name=crashed\n# ---- user commands ----\ntouch "+marker+"\n"), 0o700)
 	// no pid file at all: a daemon that died right after claiming it
 	stop, se := e.startDaemon()
 	waitFor(t, "sweep to record it", 5*time.Second, func() bool {
@@ -557,8 +558,8 @@ func TestCrashedJobIsNotRerun(t *testing.T) {
 	if !strings.Contains(se.String(), "interrupted") {
 		t.Errorf("daemon should say it set the job aside: %q", se.String())
 	}
-	if _, err := os.Stat(filepath.Join(e.spool, "logs", "7.interrupted")); err != nil {
-		t.Errorf("interrupted job script should be kept in logs/: %v", err)
+	if b, err := os.ReadFile(filepath.Join(e.spool, "history", "7.sh")); err != nil || !strings.Contains(string(b), "touch") {
+		t.Errorf("interrupted job's commands should be kept in history/: %v %q", err, b)
 	}
 	if out, _, _ := e.run("", "atq", "--all"); !strings.Contains(out, "interrupted") {
 		t.Errorf("atq --all should say 'interrupted':\n%s", out)

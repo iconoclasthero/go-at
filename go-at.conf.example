@@ -1,0 +1,23 @@
+# go-at configuration. Copy to ~/.config/go-at.conf (or $XDG_CONFIG_HOME/go-at.conf),
+# or point at it with --config FILE or AT_CONFIG=FILE.
+# Environment variables (AT_SPOOL etc.) override anything set here.
+# Check the result with:  go-at --show-config
+
+# where jobs, logs and history live (default: $XDG_STATE_HOME/at or ~/.local/state/at)
+#spool = ~/.local/state/at
+
+# shell that runs jobs
+#shell = bash
+
+# let go-at start the daemon when none is running
+#autostart = no
+
+# --batch jobs wait until the 1-minute load average is below this (0 = hold them)
+#batch_load = 1.5
+
+# days to keep records, logs and saved commands of ended jobs
+#keep_days = 30
+
+# keep the commands you typed after a job ends, so "go-at -c JOB" still works
+# (the captured environment is never kept)
+#keep_commands = yes

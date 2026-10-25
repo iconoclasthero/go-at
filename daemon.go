@@ -16,7 +16,7 @@ import (
 // batchLoadLimit: --batch jobs wait until the 1-minute load average is below
 // this. Override with AT_BATCH_LOAD.
 func batchLoadLimit() float64 {
-	if v, err := strconv.ParseFloat(os.Getenv("AT_BATCH_LOAD"), 64); err == nil && v >= 0 {
+	if v, err := strconv.ParseFloat(cfg("AT_BATCH_LOAD"), 64); err == nil && v >= 0 {
 		return v
 	}
 	return 1.5
@@ -38,7 +38,7 @@ func loadAvg() float64 {
 // keepDays: how long records of ended jobs (and their logs) are kept.
 // Override with AT_KEEP_DAYS.
 func keepDays() int {
-	if v, err := strconv.Atoi(os.Getenv("AT_KEEP_DAYS")); err == nil && v >= 0 {
+	if v, err := strconv.Atoi(cfg("AT_KEEP_DAYS")); err == nil && v >= 0 {
 		return v
 	}
 	return 30
@@ -240,6 +240,7 @@ func (d *daemon) finish(j Job, started time.Time, pid int, code *int, sigStr, no
 	if err := s.writeHistory(rec); err != nil {
 		fmt.Fprintf(os.Stderr, "go-atd: job %s: cannot write history: %v\n", j.label(), err)
 	}
+	s.saveCommands(j.ID, s.path("running", strconv.Itoa(j.ID)))
 	os.Remove(s.path("running", strconv.Itoa(j.ID)))
 	s.removeProc(j.ID)
 	d.setActive(j.ID, false)
@@ -297,8 +298,9 @@ func (d *daemon) sweep() {
 			s.writeHistory(rec)
 			fmt.Fprintf(os.Stderr, "go-atd: job %s was interrupted by a previous shutdown; not re-running it\n", j.label())
 		}
-		// keep the script for diagnosis, out of the way of the running/ directory
-		os.Rename(s.path("running", e.Name()), s.path("logs", e.Name()+".interrupted"))
+		// keep what the user typed (not the captured environment) for diagnosis
+		s.saveCommands(id, s.path("running", e.Name()))
+		os.Remove(s.path("running", e.Name()))
 		s.removeProc(id)
 	}
 }
@@ -315,6 +317,7 @@ func (d *daemon) prune() {
 		if j.Ended != nil && j.Ended.Before(cutoff) {
 			id := strconv.Itoa(j.ID)
 			os.Remove(s.historyPath(j.ID))
+			os.Remove(s.commandsPath(j.ID))
 			os.Remove(s.path("logs", id+".log"))
 			os.Remove(s.path("logs", id+".interrupted"))
 		}

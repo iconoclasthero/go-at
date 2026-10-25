@@ -56,6 +56,26 @@ func die(format string, a ...any) {
 func main() {
 	name := strings.TrimPrefix(filepath.Base(os.Args[0]), "go-")
 	args := os.Args[1:]
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "-h" || a == "--help" || a == "-help" {
+			fmt.Print(helpText)
+			return
+		}
+	}
+	args, cfgFlag, err := extractConfigFlag(args)
+	if err != nil {
+		die("%v", err)
+	}
+	if err := loadConfig(cfgFlag); err != nil {
+		die("%v", err)
+	}
+	if strings.TrimPrefix(filepath.Base(os.Args[0]), "go-") == "at" && len(args) == 1 && args[0] == "--show-config" {
+		showConfig()
+		return
+	}
 	switch name {
 	case "at", "atq", "atrm", "batch", "atd":
 	default:
@@ -65,15 +85,6 @@ func main() {
 		switch strings.TrimPrefix(args[0], "go-") {
 		case "atq", "atrm", "batch", "atd":
 			name, args = strings.TrimPrefix(args[0], "go-"), args[1:]
-		}
-	}
-	for _, a := range args {
-		if a == "--" {
-			break
-		}
-		if a == "-h" || a == "--help" || a == "-help" {
-			fmt.Print(helpText)
-			return
 		}
 	}
 	switch name {
@@ -99,7 +110,7 @@ func openSpool() *Spool {
 }
 
 func resolveShell(flagVal string) string {
-	for _, c := range []string{flagVal, os.Getenv("AT_SHELL"), "bash"} {
+	for _, c := range []string{flagVal, cfg("AT_SHELL"), "bash"} {
 		if c == "" {
 			continue
 		}
@@ -247,7 +258,7 @@ func cmdAt(args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "job %s at %s\n", label, runAt.Format(timeFmt+" MST"))
 	if !sp.DaemonRunning() {
-		if os.Getenv("AT_AUTOSTART") == "1" {
+		if cfgBool("AT_AUTOSTART", false) {
 			if started, pid, err := detachDaemon(sp); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not start go-atd: %v\n", err)
 			} else if started {
@@ -542,7 +553,13 @@ func catJobs(refs []string) {
 			die("%v", err)
 		}
 		if j.path == "" {
-			die("job %s has ended, so its script is gone; its output is available with: go-at --log %s", j.label(), ref)
+			// ended: only the commands you typed are kept, never the environment
+			b, err := os.ReadFile(sp.commandsPath(j.ID))
+			if err != nil {
+				die("job %s has ended and its commands were not kept (keep_commands is off, or it ended before this was saved); its output is available with: go-at --log %s", j.label(), ref)
+			}
+			os.Stdout.Write(b)
+			continue
 		}
 		b, err := os.ReadFile(j.path)
 		if err != nil {

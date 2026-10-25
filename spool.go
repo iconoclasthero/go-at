@@ -33,7 +33,7 @@ import (
 type Spool struct{ Dir string }
 
 func OpenSpool() (*Spool, error) {
-	dir := os.Getenv("AT_SPOOL")
+	dir := expandHome(cfg("AT_SPOOL"))
 	if dir == "" {
 		if x := os.Getenv("XDG_STATE_HOME"); x != "" {
 			dir = filepath.Join(x, "at")
