@@ -18,7 +18,7 @@ What's different, on purpose:
 3. **Seconds** work everywhere: `9:30:15`, `+ 90 seconds`.
 4. **Mixed-unit offsets**: `go-at 11-25-2026 09:30 + 2 hours 55 minutes`.
 5. **Plain words, not codes.** States are `queued`, `running`, `finished`...
-   Jobs can have **names**. You can see a running job's **process group** and
+   Jobs can have **names** (`--name <job name>`). You can see a running job's **process group** and
    **stop it** without having captured `$$`.
 
 ## Install
