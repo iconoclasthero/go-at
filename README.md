@@ -24,10 +24,10 @@ What's different, on purpose:
 ## Install
 
     git clone https://github.com/iconoclasthero/go-at && cd go-at
-    make test                 # go vet + unit and end-to-end tests
-    make install              # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
-    make static               # builds against static libraries for portability
-    sudo make install         # installs in /usr/local/bin (0755)
+    make test                             # go vet + unit and end-to-end tests
+    make install                          # ~/.local/bin/{go-at,go-atq,go-atrm,go-batch,go-atd}
+    make static                           # builds against static libraries for portability
+    sudo make install PREFIX=/usr/local   # installs in /usr/local/bin (0755)
 
 Needs Go **1.24.7 or newer** to build (the `go` line in `go.mod`; no older release is supported). Prefer a currently supported Go release for security fixes. For a fully static binary that
 needs no libc (handy on seedboxes and minimal containers) use `make static`
