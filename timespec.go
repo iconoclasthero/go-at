@@ -553,7 +553,7 @@ func (p *parser) resolve(now time.Time) (time.Time, error) {
 		}
 	}
 	if res.Before(nowL) {
-		return time.Time{}, fmt.Errorf("that time (%s) is in the past", res.Format("Mon Jan _2 15:04:05 2006 MST"))
+		return time.Time{}, fmt.Errorf("that time (%s) is in the past", fmtWhenZone(res))
 	}
 	return res, nil
 }

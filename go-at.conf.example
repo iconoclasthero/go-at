@@ -21,3 +21,15 @@
 # keep the commands you typed after a job ends, so "go-at -c JOB" still works
 # (the captured environment is never kept)
 #keep_commands = yes
+
+# how times are shown by go-atq and in messages:
+#   12h   am/pm (default)     Sun Nov 15 11:15:00 PM 2026
+#   24h                       Sun Nov 15 23:15:00 2026
+# or a format made of % sections (as in date(1)):
+#   %a Sun  %A Sunday  %b Nov  %B November  %d 05  %e " 5"  %m 11  %y 26  %Y 2026
+#   %H 23  %k " 3"  %I 11  %l "11"  %M 15  %S 00  %p AM/PM  %P am/pm  %Z EST  %z -0500
+#   %F 2026-11-15  %T 23:15:00  %R 23:15  %r 11:15:00 PM  %j day of year  %% a literal %
+# For example:
+#time_format = %a %b %e %l:%M %p
+#time_format = %d.%m.%Y %H:%M
+#time_format = 12h
