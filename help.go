@@ -18,7 +18,8 @@ SCHEDULE   go-at [options] TIME...
                       1.5) before starting; TIME may then be left out
   -C, --compose       write the commands in $VISUAL (else $EDITOR) instead of
                       at>; saved text gets a bash -n syntax check
-  -f FILE             read the commands from FILE
+  -f FILE             read the commands from FILE; with --compose, FILE is the
+                      starting text in the editor (a template; FILE is not changed)
       --config FILE   use this config file (any go-* command)
       --show-config   print the effective settings and where each came from
   -s SHELL            shell that runs the job (default bash, or $AT_SHELL)

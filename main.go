@@ -229,15 +229,24 @@ func cmdAt(args []string) {
 	shell := resolveShell(shellFlag)
 	var commands string
 	if compose {
+		// -f FILE with --compose: the file's text is the starting point in the editor
+		initial := ""
+		if file == "-" {
+			die("--compose cannot read the commands from stdin (-f -); use -f FILE")
+		}
 		if file != "" {
-			die("--compose and -f cannot be used together")
+			b, err := os.ReadFile(file)
+			if err != nil {
+				die("%v", err)
+			}
+			initial = string(b)
 		}
 		editor, err := editorCommand("--compose")
 		if err != nil {
 			die("%v", err)
 		}
 		sp := openSpool()
-		commands, err = editText(editor, "", "go-at-new-job.sh", shell, sp.path("compose.rejected"))
+		commands, err = editText(editor, initial, "go-at-new-job.sh", shell, sp.path("compose.rejected"))
 		if err != nil {
 			die("%v; job not created", err)
 		}
