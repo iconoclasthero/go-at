@@ -38,6 +38,32 @@ Go's `os/user` uses cgo when it is available; check with `ldd go-at`. Make sure 
 your `PATH`. If you want the classic names, symlink them yourself
 (`ln -s go-at ~/.local/bin/at`); the binary answers to either spelling.
 
+### Building without make, or on a machine that has no Go
+
+Build where Go is installed, copy the one file to the machine that runs it
+(a seedbox, say); that machine needs no Go. A static build has no libc
+dependency, so the two machines only have to share a CPU architecture, not
+library versions:
+
+    # on the build machine, in the clone (same command as `make static`)
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o go-at .
+    #   other CPU:  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ...   (see: uname -m)
+
+    scp go-at seedbox:.local/bin/go-at.new
+    ssh seedbox 'cd ~/.local/bin && mv -f go-at.new go-at \
+        && for n in go-atq go-atrm go-batch go-atd; do ln -sf go-at $n; done && go-at --version'
+
+Copy to a new name and `mv` it into place: copying over a running binary fails
+with "text file busy", while a rename is fine. A running `go-atd` keeps the old
+code until it is restarted (supervisord: `supervisorctl restart <program>`;
+systemd: `systemctl --user restart atd`).
+
+`go-at --version` prints the commit the binary was built from, `+modified` if
+the tree had uncommitted changes, the build time, and `static` or `dynamic (cgo)`.
+The commit is recorded by `go build` itself, so a build from a git checkout
+needs nothing extra; from a tarball it says `unknown commit`. A release can name
+itself with `-ldflags "-X main.version=v1.2.3"`.
+
 ## Example: wait for something, then poll until it appears
 
     $ go-at --name task-name 2026-10-25 09:30 + 2 hours 55 minutes
@@ -413,7 +439,7 @@ Status against the classic option set (taken from the `at(1)` man page):
 | `-t [[CC]YY]MMDDhhmm[.ss]` | absolute time (POSIX) | missing | add |
 | `-o fmt` | time format for the listing | missing | add |
 | `-v` | show the run time before reading the job | missing | add |
-| `-V` | print the version | missing | add |
+| `-V` | print the version | `-V`, `--version` | done |
 | `-M` | never mail | missing | accept as a no-op (go-at never mails) |
 | `-m`, `-u user` | mail on completion; mail recipient | missing | fail with "mail is not supported" |
 

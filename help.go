@@ -21,6 +21,7 @@ SCHEDULE   go-at [options] TIME...
   -f FILE             read the commands from FILE
       --config FILE   use this config file (any go-* command)
       --show-config   print the effective settings and where each came from
+  -V, --version       print the version: commit, build time, static or dynamic
   -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
 
 CHANGE     go-at -e, --edit JOB
