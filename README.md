@@ -150,14 +150,34 @@ editor. The interactive `at>` prompt tells you about `--compose` when you start.
   "no changes"; an empty result or an editor that exits non-zero leaves the job
   untouched. Only queued/waiting jobs can be edited. If the job starts while
   you are in the editor, nothing is applied and your text goes to
-  `<spool>/edit-<id>.rejected`. The run time cannot be changed: remove and
-  resubmit.
+  `<spool>/edit-<id>.rejected`. To change the run time use `--reschedule`
+  (below).
 - **Syntax check:** after you save, the commands get a `bash -n` check. At a
   terminal you are asked `[e]dit again, [s]ave anyway, [a]bort`; without a
   terminal the text is not applied and is kept in `<spool>/edit-<id>.rejected`
   (or `compose.rejected`). Only syntax is checked, not whether commands exist.
 - The temp file lives in a private (0700) directory and is removed afterwards.
 - Tested against real nano 7.2 on a pty.
+
+## Changing the start time and the name of a queued job
+
+    go-at --reschedule nightly tomorrow 9am         # also -R
+    go-at -R 17 11-25-2026 09:30 + 2 hours 55 minutes
+    go-at --reschedule nightly                      # opens the time in $VISUAL / $EDITOR
+    go-at --rename 17 nightly                       # give an unnamed job its first name
+    go-at --rename nightly weekly-backup            # rename a named one
+
+- **`--reschedule JOB [TIME...]`** takes the same time specs as scheduling
+  does, including offsets (`+ 2h 55m`), and a time in the past is refused. With
+  no `TIME` the current start time opens in your editor above a
+  `everything below this line is discarded` line (like `systemctl edit`); type
+  the new time over it. Leaving it alone prints "no changes".
+- **`--rename JOB NEWNAME`** follows the naming rules of `--name` (a letter
+  first, then letters, digits, `.` `_` `-`) and a name that another queued or
+  running job has is refused. `AT_JOB_NAME` inside the job is updated too.
+- Both keep the job's number, environment and commands: nothing is removed and
+  re-created. Only queued/waiting jobs can be changed; if a job starts first,
+  nothing is applied (the same locking as `--edit`).
 
 ## Priority and batch
 
@@ -308,6 +328,32 @@ where it came from.
 | `batch_load` | `AT_BATCH_LOAD` | `1.5` (0 holds batch jobs until raised) |
 | `keep_days` | `AT_KEEP_DAYS` | `30` (records, logs and saved commands of ended jobs) |
 | `keep_commands` | `AT_KEEP_COMMANDS` | `yes` |
+| `time_format` | `AT_TIME_FORMAT` | `12h` (am/pm; `24h`, or a custom format, see below) |
+
+#### Time format
+
+Times in `go-atq` and in messages are 12-hour with AM/PM by default:
+`Sun Nov 15 11:15:00 PM 2026`. Set `time_format = 24h` for the old 24-hour
+look, or build your own from `%` sections, as in `date(1)`:
+
+    time_format = %a %b %e %l:%M %p          # Sun Nov 15 11:15 PM
+    time_format = %Y-%m-%d %I:%M:%S %P       # 2026-11-15 11:15:00 pm
+    time_format = %d.%m.%Y %H:%M             # 15.11.2026 23:15
+
+| | | | |
+| :- | :- | :- | :- |
+| `%a` Sun | `%A` Sunday | `%b` Nov | `%B` November |
+| `%d` 05 | `%e` ` 5` | `%m` 11 | `%y` 26 |
+| `%Y` 2026 | `%j` day of year | `%H` 23 | `%k` ` 3` (24h, space-padded) |
+| `%I` 03 | `%l` ` 3` (12h, space-padded) | `%M` 05 | `%S` 09 |
+| `%p` AM/PM | `%P` am/pm | `%Z` EST | `%z` -0500 |
+| `%F` 2026-11-15 | `%T` 23:15:00 | `%R` 23:15 | `%r` 11:15:00 PM |
+| `%%` a `%` | `%n` newline | `%t` tab | |
+
+An unknown section is an error with the line number. The format only affects
+how times are displayed: `--json` output and the way you type times are
+unchanged. It is a config-file (or `AT_TIME_FORMAT`) setting only; there is no
+command-line option.
 
 Yes/no values accept yes/no, true/false, on/off, 1/0. `AT_CONFIG` is the one
 variable with no config key (it names the file). Inside every job, `AT_JOB_ID`

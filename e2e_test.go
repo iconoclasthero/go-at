@@ -79,7 +79,7 @@ func newEnv(t *testing.T) *env {
 // cmd builds a command for "at", "atq", "atrm", "batch" or "atd".
 func (e *env) cmd(stdin string, name string, args ...string) *exec.Cmd {
 	c := exec.Command(filepath.Join(binDir, "go-"+name), args...)
-	c.Env = append(os.Environ(), "AT_SPOOL="+e.spool, "TZ=America/New_York", "AT_AUTOSTART=", "AT_SHELL=", "AT_KEEP_DAYS=", "AT_CONFIG=", "AT_KEEP_COMMANDS=", "AT_BATCH_LOAD=",
+	c.Env = append(os.Environ(), "AT_SPOOL="+e.spool, "TZ=America/New_York", "AT_AUTOSTART=", "AT_SHELL=", "AT_KEEP_DAYS=", "AT_CONFIG=", "AT_KEEP_COMMANDS=", "AT_BATCH_LOAD=", "AT_TIME_FORMAT=",
 		"XDG_CONFIG_HOME="+filepath.Join(e.spool, "no-config-here"), "HOME="+e.spool)
 	c.Env = append(c.Env, e.extra...)
 	c.Stdin = strings.NewReader(stdin)
