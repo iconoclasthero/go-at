@@ -53,6 +53,18 @@ library versions:
     ssh seedbox 'cd ~/.local/bin && mv -f go-at.new go-at \
         && for n in go-atq go-atrm go-batch go-atd; do ln -sf go-at $n; done && go-at --version'
 
+**Or skip building: download a prebuilt static binary** (linux amd64 and arm64).
+Every push to a branch publishes a prerelease `dev-<branch>`, and a `v*` tag
+publishes a release (only if the tests pass), each with a `SHA256SUMS` file:
+
+    # a branch you want to try (the binary is replaced on every push to it)
+    curl -fL -o go-at.new https://github.com/iconoclasthero/go-at/releases/download/dev-BRANCH/go-at-linux-amd64
+    # the latest tagged release
+    curl -fL -o go-at.new https://github.com/iconoclasthero/go-at/releases/latest/download/go-at-linux-amd64
+
+then `mv` it into place as below. `go-at --version` names the branch or tag and
+the commit. When a branch is done, `gh release delete dev-BRANCH --cleanup-tag`.
+
 Copy to a new name and `mv` it into place: copying over a running binary fails
 with "text file busy", while a rename is fine. A running `go-atd` keeps the old
 code until it is restarted (supervisord: `supervisorctl restart <program>`;
