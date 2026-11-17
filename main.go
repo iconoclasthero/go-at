@@ -58,6 +58,10 @@ func main() {
 		if a == "--" {
 			break
 		}
+		if a == "--version" || a == "-V" || a == "-version" {
+			fmt.Println(versionString())
+			return
+		}
 		if a == "-h" || a == "--help" || a == "-help" {
 			io.WriteString(os.Stdout, helpText) // not fmt.Print: the text contains % sections
 			return
