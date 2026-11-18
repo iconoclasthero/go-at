@@ -22,6 +22,10 @@
 # (the captured environment is never kept)
 #keep_commands = yes
 
+# how a job is chosen when a command is given none (only at a terminal):
+#   auto  fzf if installed, else a numbered menu (default)   fzf   menu   off
+#picker = auto
+
 # how times are shown by go-atq and in messages:
 #   12h   am/pm (default)     Sun Nov 15 11:15:00 PM 2026
 #   24h                       Sun Nov 15 23:15:00 2026

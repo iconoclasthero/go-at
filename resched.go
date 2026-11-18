@@ -1,7 +1,7 @@
 package main
 
 // go-at --reschedule JOB [TIME...]   change when a queued job runs
-// go-at --rename JOB NEWNAME         name, or rename, a queued job
+// go-at --rename JOB NEWNAME         name, or rename, a queued or an ended job
 //
 // Both only change the "# atjob" header line of the job script (and, for a
 // name, the exported AT_JOB_NAME line above the commands). The job keeps its
@@ -11,6 +11,7 @@ package main
 // queued; if it started in the meantime nothing is changed.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -131,28 +132,33 @@ func (s *Spool) modifyQueued(ref string, check func(Job) error, change func(stri
 	return j, nil
 }
 
-// RenameJob gives a queued job a new name, or its first one.
-func (s *Spool) RenameJob(ref, name string) (string, error) {
+// RenameJob gives a job a new name, or its first one. A queued or waiting job
+// is changed in its script file; an ended one in its history record, which is
+// how finished jobs can be organised afterwards. A running job cannot be
+// renamed: its script has been claimed and its name is already in its
+// environment.
+func (s *Spool) RenameJob(j Job, name string) (string, error) {
 	if !nameRe.MatchString(name) {
 		return "", fmt.Errorf("bad job name %q: start with a letter, then letters, digits, '.', '_' or '-' (up to 64 characters)", name)
 	}
-	old, err := s.modifyQueued(ref, func(j Job) error {
-		if j.Name == name {
+	if !j.Active() {
+		return s.renameEnded(j, name)
+	}
+	old, err := s.modifyQueued(j.ref(), func(cur Job) error {
+		if cur.Name == name {
 			return errNoChange
 		}
-		active, err := s.Active()
-		if err != nil {
-			return err
-		}
-		for _, o := range active {
-			if o.Name == name && o.ID != j.ID {
-				return fmt.Errorf("the name %q is already used by job %d (%s); pick another name or remove that job first", name, o.ID, o.State)
-			}
+		// an ended job may share the name; an active one may not
+		if owner, taken := s.activeOwner(name, cur.ID); taken {
+			return nameTakenError(name, owner)
 		}
 		return nil
 	}, func(script string) (string, error) { return setJobName(script, name) })
+	return renamed(j, old, name, err)
+}
+
+func renamed(j, old Job, name string, err error) (string, error) {
 	if err == errNoChange {
-		j, _ := s.Find(ref, false)
 		return fmt.Sprintf("job %s: already named %s", j.label(), name), nil
 	}
 	if err != nil {
@@ -162,6 +168,33 @@ func (s *Spool) RenameJob(ref, name string) (string, error) {
 		return fmt.Sprintf("job %d named %s", old.ID, name), nil
 	}
 	return fmt.Sprintf("job %d renamed from %s to %s", old.ID, old.Name, name), nil
+}
+
+// renameEnded renames an ended job. Names of ended jobs need not be unique,
+// so nothing is checked beyond the form of the name.
+func (s *Spool) renameEnded(j Job, name string) (string, error) {
+	unlock, err := s.lock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	b, err := os.ReadFile(s.historyPath(j.ID))
+	if err != nil {
+		return "", fmt.Errorf("job %s has no history record yet (it is %s); try again in a moment", j.label(), j.State)
+	}
+	var rec Job
+	if err := json.Unmarshal(b, &rec); err != nil || rec.ID != j.ID {
+		return "", fmt.Errorf("job %s: its history record cannot be read", j.label())
+	}
+	old := rec
+	if rec.Name == name {
+		return renamed(j, old, name, errNoChange)
+	}
+	rec.Name = name
+	if err := s.writeHistory(rec); err != nil {
+		return "", err
+	}
+	return renamed(j, old, name, nil)
 }
 
 var errNoChange = fmt.Errorf("no change")
