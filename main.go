@@ -21,8 +21,6 @@ import (
 	"time"
 )
 
-const timeFmt = "Mon Jan _2 15:04:05 2006"
-
 // The terminal is put in raw mode while at> is active. Every way out of the
 // program must put it back, so the restore function lives here where die(),
 // the signal handler and the normal return path can all reach it.
@@ -60,8 +58,12 @@ func main() {
 		if a == "--" {
 			break
 		}
+		if a == "--version" || a == "-V" || a == "-version" {
+			fmt.Println(versionString())
+			return
+		}
 		if a == "-h" || a == "--help" || a == "-help" {
-			fmt.Print(helpText)
+			io.WriteString(os.Stdout, helpText) // not fmt.Print: the text contains % sections
 			return
 		}
 	}
@@ -71,6 +73,11 @@ func main() {
 	}
 	if err := loadConfig(cfgFlag); err != nil {
 		die("%v", err)
+	}
+	if v := os.Getenv("AT_TIME_FORMAT"); v != "" { // the config file's value was checked on load
+		if err := checkTimeFormat(v); err != nil {
+			die("AT_TIME_FORMAT: %v", err)
+		}
 	}
 	if strings.TrimPrefix(filepath.Base(os.Args[0]), "go-") == "at" && len(args) == 1 && args[0] == "--show-config" {
 		showConfig()
@@ -131,6 +138,9 @@ const atUsage = `usage: go-at [options] TIME...        schedule commands (typed 
     -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
     -f FILE             read the commands from FILE
 
+       go-at -e, --edit JOB                     edit a queued job's commands in $EDITOR
+       go-at -R, --reschedule JOB [TIME...]     change when a queued job runs (no TIME: edit it in $EDITOR)
+       go-at --rename JOB NEWNAME               name or rename a queued job
        go-at -l | go-atq [-a|--all] [--json]   list jobs: queued, waiting, running (--all adds ended ones)
        go-at -c JOB                             print the script of a queued or running job
        go-at --log JOB                          print a job's output
@@ -155,7 +165,7 @@ func cmdAt(args []string) {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, atUsage) }
 	var name, file, shellFlag string
 	var nice int
-	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit, compose bool
+	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit, compose, resched, rename bool
 	fs.StringVar(&name, "n", "", "")
 	fs.StringVar(&name, "name", "", "")
 	fs.IntVar(&nice, "nice", 0, "")
@@ -175,6 +185,9 @@ func cmdAt(args []string) {
 	fs.BoolVar(&edit, "e", false, "")
 	fs.BoolVar(&compose, "compose", false, "")
 	fs.BoolVar(&compose, "C", false, "")
+	fs.BoolVar(&resched, "reschedule", false, "")
+	fs.BoolVar(&resched, "R", false, "")
+	fs.BoolVar(&rename, "rename", false, "")
 	oldQueue := fs.String("q", "", "")
 	fs.Parse(args)
 
@@ -196,6 +209,26 @@ func cmdAt(args []string) {
 			die("usage: go-at --edit JOB   (JOB is a number or a name)")
 		}
 		msg, err := openSpool().EditJob(fs.Arg(0))
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	case resched:
+		if len(fs.Args()) < 1 {
+			die("usage: go-at --reschedule JOB [TIME...]   (JOB is a number or a name; without TIME the time opens in your editor)")
+		}
+		msg, err := openSpool().RescheduleJob(fs.Arg(0), strings.Join(fs.Args()[1:], " "))
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	case rename:
+		if len(fs.Args()) != 2 {
+			die("usage: go-at --rename JOB NEWNAME   (JOB is a number or a name)")
+		}
+		msg, err := openSpool().RenameJob(fs.Arg(0), fs.Arg(1))
 		if err != nil {
 			die("%v", err)
 		}
@@ -265,7 +298,7 @@ func cmdAt(args []string) {
 	if name != "" {
 		label = fmt.Sprintf("%d (%s)", id, name)
 	}
-	fmt.Fprintf(os.Stderr, "job %s at %s\n", label, runAt.Format(timeFmt+" MST"))
+	fmt.Fprintf(os.Stderr, "job %s at %s\n", label, fmtWhenZone(runAt))
 	if !sp.DaemonRunning() {
 		if cfgBool("AT_AUTOSTART", false) {
 			if started, pid, err := detachDaemon(sp); err != nil {
@@ -316,7 +349,7 @@ func readInteractive(runAt time.Time) (cmds string, cancelled bool) {
 	} else {
 		fmt.Fprint(os.Stderr, "Restart with --compose to use editor set in \"$VISUAL\" then \"$EDITOR\".\n")
 	}
-	fmt.Fprintf(os.Stderr, "at %s\n", runAt.Format(timeFmt+" MST"))
+	fmt.Fprintf(os.Stderr, "at %s\n", fmtWhenZone(runAt))
 	restore, err := makeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		die("cannot set terminal mode: %v", err)
@@ -369,7 +402,7 @@ func cmdList(args []string) {
 }
 
 func describe(j Job) (when, detail string) {
-	f := func(t time.Time) string { return t.Local().Format(timeFmt) }
+	f := func(t time.Time) string { return fmtWhen(t.Local()) }
 	var parts []string
 	switch j.State {
 	case stQueued:

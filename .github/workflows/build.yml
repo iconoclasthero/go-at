@@ -1,0 +1,96 @@
+# Static linux binaries of go-at.
+#
+#   push to any branch -> prerelease "dev-<branch>" holding that branch's binaries
+#                         (replaced on every push; delete it when the branch is done)
+#   push of a v* tag   -> a normal release, only if the tests pass
+#
+# Download without Go or make:
+#   curl -L -o go-at.new https://github.com/iconoclasthero/go-at/releases/download/dev-BRANCH/go-at-linux-amd64
+#   curl -L -o go-at.new https://github.com/iconoclasthero/go-at/releases/latest/download/go-at-linux-amd64
+# Only the pushed commit is built (not a PR's merge commit), so "go-at --version"
+# names the commit you expect.
+
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build (static)
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.version=${REF_NAME//[^A-Za-z0-9._-]/-}" \
+            -o "go-at-linux-${GOARCH}" .
+      - name: Show the version (amd64 runs here)
+        if: matrix.goarch == 'amd64'
+        run: ./go-at-linux-amd64 --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-at-linux-${{ matrix.goarch }}
+          path: go-at-linux-${{ matrix.goarch }}
+          retention-days: 14
+
+  publish:
+    needs: [build, test]
+    # branch builds publish even if a test fails (you want the binary to try);
+    # a tag release needs the tests to pass
+    if: ${{ !cancelled() && needs.build.result == 'success' && (github.ref_type != 'tag' || needs.test.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum go-at-linux-* > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            gh release create "$REF_NAME" dist/* --title "$REF_NAME" --generate-notes --verify-tag
+          else
+            name="dev-${REF_NAME//[^A-Za-z0-9._-]/-}"
+            gh release delete "$name" --yes --cleanup-tag 2>/dev/null || true
+            gh release create "$name" dist/* --target "$GITHUB_SHA" --prerelease \
+              --title "$name (${GITHUB_SHA:0:7})" \
+              --notes "Build of branch \`$REF_NAME\` at commit \`${GITHUB_SHA:0:7}\`. Not a release: replaced on every push."
+          fi

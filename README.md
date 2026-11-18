@@ -38,6 +38,44 @@ Go's `os/user` uses cgo when it is available; check with `ldd go-at`. Make sure 
 your `PATH`. If you want the classic names, symlink them yourself
 (`ln -s go-at ~/.local/bin/at`); the binary answers to either spelling.
 
+### Building without make, or on a machine that has no Go
+
+Build where Go is installed, copy the one file to the machine that runs it
+(a seedbox, say); that machine needs no Go. A static build has no libc
+dependency, so the two machines only have to share a CPU architecture, not
+library versions:
+
+    # on the build machine, in the clone (same command as `make static`)
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o go-at .
+    #   other CPU:  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ...   (see: uname -m)
+
+    scp go-at seedbox:.local/bin/go-at.new
+    ssh seedbox 'cd ~/.local/bin && mv -f go-at.new go-at \
+        && for n in go-atq go-atrm go-batch go-atd; do ln -sf go-at $n; done && go-at --version'
+
+**Or skip building: download a prebuilt static binary** (linux amd64 and arm64).
+Every push to a branch publishes a prerelease `dev-<branch>`, and a `v*` tag
+publishes a release (only if the tests pass), each with a `SHA256SUMS` file:
+
+    # a branch you want to try (the binary is replaced on every push to it)
+    curl -fL -o go-at.new https://github.com/iconoclasthero/go-at/releases/download/dev-BRANCH/go-at-linux-amd64
+    # the latest tagged release
+    curl -fL -o go-at.new https://github.com/iconoclasthero/go-at/releases/latest/download/go-at-linux-amd64
+
+then `mv` it into place as below. `go-at --version` names the branch or tag and
+the commit. When a branch is done, `gh release delete dev-BRANCH --cleanup-tag`.
+
+Copy to a new name and `mv` it into place: copying over a running binary fails
+with "text file busy", while a rename is fine. A running `go-atd` keeps the old
+code until it is restarted (supervisord: `supervisorctl restart <program>`;
+systemd: `systemctl --user restart atd`).
+
+`go-at --version` prints the commit the binary was built from, `+modified` if
+the tree had uncommitted changes, the build time, and `static` or `dynamic (cgo)`.
+The commit is recorded by `go build` itself, so a build from a git checkout
+needs nothing extra; from a tarball it says `unknown commit`. A release can name
+itself with `-ldflags "-X main.version=v1.2.3"`.
+
 ## Example: wait for something, then poll until it appears
 
     $ go-at --name task-name 2026-10-25 09:30 + 2 hours 55 minutes
@@ -151,14 +189,34 @@ editor. The interactive `at>` prompt tells you about `--compose` when you start.
   "no changes"; an empty result or an editor that exits non-zero leaves the job
   untouched. Only queued/waiting jobs can be edited. If the job starts while
   you are in the editor, nothing is applied and your text goes to
-  `<spool>/edit-<id>.rejected`. The run time cannot be changed: remove and
-  resubmit.
+  `<spool>/edit-<id>.rejected`. To change the run time use `--reschedule`
+  (below).
 - **Syntax check:** after you save, the commands get a `bash -n` check. At a
   terminal you are asked `[e]dit again, [s]ave anyway, [a]bort`; without a
   terminal the text is not applied and is kept in `<spool>/edit-<id>.rejected`
   (or `compose.rejected`). Only syntax is checked, not whether commands exist.
 - The temp file lives in a private (0700) directory and is removed afterwards.
 - Tested against real nano 7.2 on a pty.
+
+## Changing the start time and the name of a queued job
+
+    go-at --reschedule nightly tomorrow 9am         # also -R
+    go-at -R 17 11-25-2026 09:30 + 2 hours 55 minutes
+    go-at --reschedule nightly                      # opens the time in $VISUAL / $EDITOR
+    go-at --rename 17 nightly                       # give an unnamed job its first name
+    go-at --rename nightly weekly-backup            # rename a named one
+
+- **`--reschedule JOB [TIME...]`** takes the same time specs as scheduling
+  does, including offsets (`+ 2h 55m`), and a time in the past is refused. With
+  no `TIME` the current start time opens in your editor above a
+  `everything below this line is discarded` line (like `systemctl edit`); type
+  the new time over it. Leaving it alone prints "no changes".
+- **`--rename JOB NEWNAME`** follows the naming rules of `--name` (a letter
+  first, then letters, digits, `.` `_` `-`) and a name that another queued or
+  running job has is refused. `AT_JOB_NAME` inside the job is updated too.
+- Both keep the job's number, environment and commands: nothing is removed and
+  re-created. Only queued/waiting jobs can be changed; if a job starts first,
+  nothing is applied (the same locking as `--edit`).
 
 ## Priority and batch
 
@@ -309,6 +367,32 @@ where it came from.
 | `batch_load` | `AT_BATCH_LOAD` | `1.5` (0 holds batch jobs until raised) |
 | `keep_days` | `AT_KEEP_DAYS` | `30` (records, logs and saved commands of ended jobs) |
 | `keep_commands` | `AT_KEEP_COMMANDS` | `yes` |
+| `time_format` | `AT_TIME_FORMAT` | `12h` (am/pm; `24h`, or a custom format, see below) |
+
+#### Time format
+
+Times in `go-atq` and in messages are 12-hour with AM/PM by default:
+`Sun Nov 15 11:15:00 PM 2026`. Set `time_format = 24h` for the old 24-hour
+look, or build your own from `%` sections, as in `date(1)`:
+
+    time_format = %a %b %e %l:%M %p          # Sun Nov 15 11:15 PM
+    time_format = %Y-%m-%d %I:%M:%S %P       # 2026-11-15 11:15:00 pm
+    time_format = %d.%m.%Y %H:%M             # 15.11.2026 23:15
+
+| | | | |
+| :- | :- | :- | :- |
+| `%a` Sun | `%A` Sunday | `%b` Nov | `%B` November |
+| `%d` 05 | `%e` ` 5` | `%m` 11 | `%y` 26 |
+| `%Y` 2026 | `%j` day of year | `%H` 23 | `%k` ` 3` (24h, space-padded) |
+| `%I` 03 | `%l` ` 3` (12h, space-padded) | `%M` 05 | `%S` 09 |
+| `%p` AM/PM | `%P` am/pm | `%Z` EST | `%z` -0500 |
+| `%F` 2026-11-15 | `%T` 23:15:00 | `%R` 23:15 | `%r` 11:15:00 PM |
+| `%%` a `%` | `%n` newline | `%t` tab | |
+
+An unknown section is an error with the line number. The format only affects
+how times are displayed: `--json` output and the way you type times are
+unchanged. It is a config-file (or `AT_TIME_FORMAT`) setting only; there is no
+command-line option.
 
 Yes/no values accept yes/no, true/false, on/off, 1/0. `AT_CONFIG` is the one
 variable with no config key (it names the file). Inside every job, `AT_JOB_ID`
@@ -368,7 +452,7 @@ Status against the classic option set (taken from the `at(1)` man page):
 | `-t [[CC]YY]MMDDhhmm[.ss]` | absolute time (POSIX) | missing | add |
 | `-o fmt` | time format for the listing | missing | add |
 | `-v` | show the run time before reading the job | missing | add |
-| `-V` | print the version | missing | add |
+| `-V` | print the version | `-V`, `--version` | done |
 | `-M` | never mail | missing | accept as a no-op (go-at never mails) |
 | `-m`, `-u user` | mail on completion; mail recipient | missing | fail with "mail is not supported" |
 

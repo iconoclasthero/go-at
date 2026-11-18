@@ -22,6 +22,7 @@ SCHEDULE   go-at [options] TIME...
                       starting text in the editor (a template; FILE is not changed)
       --config FILE   use this config file (any go-* command)
       --show-config   print the effective settings and where each came from
+  -V, --version       print the version: commit, build time, static or dynamic
   -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
 
 CHANGE     go-at -e, --edit JOB
@@ -29,8 +30,15 @@ CHANGE     go-at -e, --edit JOB
   captured environment are kept. Refused once the job is running. If the job
   starts while you are editing, nothing is applied and your text is saved to
   <spool>/edit-<id>.rejected.
+           go-at -R, --reschedule JOB [TIME...]
+  Change when a queued job runs. TIME is anything go-at accepts (tomorrow 9am,
+  2026-11-11 11:00 + 2h 55m). Without TIME the start time opens in your editor
+  above a line saying everything below it is discarded.
+           go-at --rename JOB NEWNAME
+  Name an unnamed queued job, or rename one (same rules as --name).
+  Both keep the job's number, environment and commands.
 
-LIST       go-at -l | go-atq [-a|--all] [--json]
+LIST      go-at -l | go-atq [-a|--all] [--json]
   Table of ID, NAME, STATE, WHEN, DETAIL. States are plain words: queued,
   waiting (due, held back by --batch), running, and with --all: finished,
   failed, terminated, interrupted. --json is for scripts. A running job's
@@ -77,6 +85,14 @@ CONFIGURATION
   batch_load     AT_BATCH_LOAD    1.5  (load average below which --batch starts)
   keep_days      AT_KEEP_DAYS     30   (history, logs and saved commands)
   keep_commands  AT_KEEP_COMMANDS yes  (save commands of ended jobs; go-at -c)
+  time_format    AT_TIME_FORMAT   12h  (am/pm; or 24h, or % sections, see below)
+
+  time_format: "12h" (Sun Nov 15 11:15:00 PM 2026), "24h" (Sun Nov 15 23:15:00
+  2026) or a format of % sections as in date(1). Config file or environment
+  only, there is no command-line option. Example: time_format = %a %b %e %l:%M %p
+    %a Sun  %A Sunday  %b Nov  %B November  %d 05  %e " 5"  %m 11  %y 26  %Y 2026
+    %H 23  %k " 3"  %I 11  %l "11"  %M 15  %S 00  %p AM/PM  %P am/pm  %Z EST
+    %z -0500  %F 2026-11-15  %T 23:15:00  %R 23:15  %r 11:15:00 PM  %j yearday  %% %
 
 ENVIRONMENT
   AT_CONFIG        path of the config file
