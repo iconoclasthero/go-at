@@ -86,6 +86,8 @@ func runDaemon(s *Spool) error {
 	d := &daemon{s: s, active: map[int]bool{}, seen: map[int]bool{}}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	// which build is running matters after an upgrade: a daemon keeps its old code until restarted
+	fmt.Fprintf(os.Stderr, "go-atd: version %s\n", strings.TrimPrefix(versionString(), "go-at "))
 	fmt.Fprintf(os.Stderr, "go-atd: watching %s\n", s.Dir)
 	d.sweep()
 	d.prune()

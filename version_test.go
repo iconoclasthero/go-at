@@ -1,8 +1,10 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFormatVersion(t *testing.T) {
@@ -43,5 +45,23 @@ func TestVersionFlag(t *testing.T) {
 	// it needs no spool, no config and no daemon, and does not create anything
 	if len(e.jobs()) != 0 {
 		t.Errorf("--version must not touch the spool")
+	}
+}
+
+func TestDaemonLogsItsVersion(t *testing.T) {
+	e := newEnv(t)
+	stop, stderr := e.startDaemon()
+	defer stop()
+	waitFor(t, "daemon start-up lines", 5*time.Second, func() bool { return strings.Contains(stderr.String(), "watching") })
+	log := stderr.String()
+	if n := strings.Count(log, "go-atd: version "); n != 1 {
+		t.Fatalf("want one version line, got %d:\n%s", n, log)
+	}
+	// it comes before "watching" and names the platform, like --version does
+	// (the daemon binary is built separately by the harness, so its commit differs from the test's)
+	i, j := strings.Index(log, "go-atd: version "), strings.Index(log, "go-atd: watching")
+	line := log[i : i+strings.Index(log[i:], "\n")]
+	if i < 0 || j < i || !strings.Contains(line, runtime.GOOS+"/"+runtime.GOARCH) || strings.Contains(line, "go-at go-at") {
+		t.Errorf("version line missing, misplaced or malformed:\n%s", log)
 	}
 }
