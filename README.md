@@ -176,6 +176,7 @@ that exits just before the signal arrives.
 ## Writing and editing commands in your editor
 
     go-at --compose --name nightly 02:00      # also -C: write the commands in $VISUAL
+    go-at --compose -f ~/tpl/job.sh -n nightly 02:00   # start the editor from a file (a template)
     go-at --edit task-name                 # also -e: change a queued job (name or number)
 
 Both use `$VISUAL`, else `$EDITOR` (the value may include arguments, e.g.

@@ -195,8 +195,49 @@ func TestComposeCreatesJob(t *testing.T) {
 	if _, se, code := e.run("", "at", "-C", "now", "+", "1", "hour"); code == 0 || len(e.jobs()) != 1 {
 		t.Errorf("empty compose should not create a job: %d %q", code, se)
 	}
-	if _, _, code := e.run("", "at", "--compose", "-f", "x", "now"); code == 0 {
-		t.Errorf("--compose with -f should fail")
+}
+
+func TestComposeStartsFromFile(t *testing.T) {
+	e := newEnv(t)
+	tpl := filepath.Join(t.TempDir(), "template.sh")
+	os.WriteFile(tpl, []byte("echo template\nsleep 1\n"), 0o644)
+
+	// the editor starts with the file's text; what it saves is what is scheduled
+	seen := filepath.Join(t.TempDir(), "seen")
+	e.extra = []string{"VISUAL=" + fakeEditor(t, `cp "$f" `+seen+`; echo 'echo added' >> "$f"`)}
+	if _, se, code := e.run("", "at", "--compose", "-f", tpl, "-n", "tp", "now", "+", "1", "hour"); code != 0 {
+		t.Fatalf("compose with -f: %d %s", code, se)
+	}
+	if b, _ := os.ReadFile(seen); string(b) != "echo template\nsleep 1\n" {
+		t.Errorf("editor should start with the file's text, got %q", b)
+	}
+	if s := e.script("tp"); !strings.HasSuffix(s, "# ---- user commands ----\necho template\nsleep 1\necho added\n") {
+		t.Errorf("edited text missing:\n%s", s)
+	}
+	if b, _ := os.ReadFile(tpl); string(b) != "echo template\nsleep 1\n" {
+		t.Errorf("the template file must never be modified: %q", b)
+	}
+
+	// saving without changes submits the file as it is (like plain -f)
+	e.extra = []string{"VISUAL=" + fakeEditor(t, `true`)}
+	if _, se, code := e.run("", "at", "-C", "-f", tpl, "-n", "tp2", "now", "+", "1", "hour"); code != 0 {
+		t.Fatalf("unchanged: %d %s", code, se)
+	}
+	if s := e.script("tp2"); !strings.HasSuffix(s, "echo template\nsleep 1\n") {
+		t.Errorf("unchanged template should be submitted:\n%s", s)
+	}
+
+	// emptying the buffer creates nothing; a missing file or -f - is refused
+	n := len(e.jobs())
+	e.extra = []string{"VISUAL=" + fakeEditor(t, `: > "$f"`)}
+	if _, _, code := e.run("", "at", "-C", "-f", tpl, "now", "+", "1", "hour"); code == 0 || len(e.jobs()) != n {
+		t.Errorf("emptied buffer should not create a job")
+	}
+	if _, se, code := e.run("", "at", "-C", "-f", filepath.Join(t.TempDir(), "nope"), "now"); code == 0 || se == "" {
+		t.Errorf("missing file should fail: %d %q", code, se)
+	}
+	if _, se, code := e.run("echo x\n", "at", "-C", "-f", "-", "now"); code == 0 || !strings.Contains(se, "stdin") {
+		t.Errorf("-f - with --compose should be refused: %d %q", code, se)
 	}
 }
 
