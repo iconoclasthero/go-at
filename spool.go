@@ -155,29 +155,37 @@ type Submission struct {
 	Batch    bool
 	Shell    string
 	Commands string
+	// SuffixID: if Name is taken by an active job, use Name-<this job's number> instead
+	SuffixID bool
 }
 
-func (s *Spool) AddJob(sub Submission) (int, error) {
+// AddJob creates the job and returns its number and its name (which differs
+// from sub.Name only when SuffixID applied).
+func (s *Spool) AddJob(sub Submission) (int, string, error) {
 	unlock, err := s.lock()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer unlock()
 
+	suffix := false
 	if sub.Name != "" {
-		active, err := s.Active()
-		if err != nil {
-			return 0, err
-		}
-		for _, j := range active {
-			if j.Name == sub.Name {
-				return 0, fmt.Errorf("the name %q is already used by job %d (%s); pick another name or remove that job first", sub.Name, j.ID, j.State)
+		if owner, taken := s.activeOwner(sub.Name, 0); taken {
+			if !sub.SuffixID {
+				return 0, "", nameTakenError(sub.Name, owner)
 			}
+			suffix = true
 		}
 	}
 	id, err := s.nextIDLocked()
 	if err != nil {
-		return 0, err
+		return 0, "", err
+	}
+	if suffix {
+		sub.Name = suffixedName(sub.Name, id)
+		if owner, taken := s.activeOwner(sub.Name, 0); taken {
+			return 0, "", nameTakenError(sub.Name, owner)
+		}
 	}
 	u := "unknown"
 	if cu, err := user.Current(); err == nil {
@@ -216,9 +224,9 @@ func (s *Spool) AddJob(sub Submission) (int, error) {
 	}
 	tmp := s.path("jobs", fmt.Sprintf(".tmp-%d", id))
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o700); err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return id, os.Rename(tmp, s.path("jobs", strconv.Itoa(id)))
+	return id, sub.Name, os.Rename(tmp, s.path("jobs", strconv.Itoa(id)))
 }
 
 // ---- reading jobs ----------------------------------------------------------
@@ -231,11 +239,12 @@ func parseHeader(path string) (Job, error) {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	sc.Scan() // shebang
+	sc.Scan() // shebang: "#!/usr/bin/bash"
+	shebang := strings.TrimSpace(strings.TrimPrefix(sc.Text(), "#!"))
 	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "# atjob ") {
 		return Job{}, fmt.Errorf("%s: not a job file", path)
 	}
-	j := Job{path: path, State: stQueued}
+	j := Job{path: path, State: stQueued, Shell: shebang}
 	for _, f := range strings.Fields(sc.Text()[len("# atjob "):]) {
 		k, v, _ := strings.Cut(f, "=")
 		n, _ := strconv.ParseInt(v, 10, 64)

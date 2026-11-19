@@ -49,6 +49,7 @@ type Job struct {
 	Unverified bool       `json:"pid_unverified,omitempty"`
 	Nice       int        `json:"nice,omitempty"`
 	Batch      bool       `json:"batch,omitempty"`
+	Shell      string     `json:"shell,omitempty"`
 	ExitCode   *int       `json:"exit_code,omitempty"`
 	Signal     string     `json:"signal,omitempty"`
 	Log        string     `json:"log,omitempty"`

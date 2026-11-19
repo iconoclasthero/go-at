@@ -35,8 +35,33 @@ CHANGE     go-at -e, --edit JOB
   2026-11-11 11:00 + 2h 55m). Without TIME the start time opens in your editor
   above a line saying everything below it is discarded.
            go-at --rename JOB NEWNAME
-  Name an unnamed queued job, or rename one (same rules as --name).
-  Both keep the job's number, environment and commands.
+  Name an unnamed job, or rename one (same rules as --name). Ended jobs can be
+  renamed too, which is how a finished job is made easy to find. A name an
+  active job has is refused, or on a terminal you are offered NAME-<job number>
+  or a new name. Without JOB, on a terminal, you choose the job.
+  All of these keep the job's number, environment and commands.
+
+COPY      go-at --copy JOB-or-FILE [--no-edit] [-n NAME] TIME...
+  A new job from the commands of a queued, running or ended job (a name or
+  number), or from a file (anything with a "/" in it, or starting with "~").
+  It runs in the current environment and directory, keeps --nice, --batch and
+  the shell of the original (--nice and -s override), and needs a TIME. Your
+  editor opens on the commands first; --no-edit skips that.
+
+SHOW      go-at --show [JOB]      go-atq --browse
+  One job in full: times, result, options, commands and the end of its output.
+  --browse picks from all jobs (queued and ended) and shows the one you choose.
+
+NAMES     --latest
+  A name that several ended jobs share is not guessed at: the command fails and
+  lists them (use a number). --latest takes the newest, for scripts. Active
+  names are unique and always win.
+
+PICKER    setting picker = auto | fzf | menu | off
+  When a command needs a job and none was named, and you are at a terminal:
+  fzf if it is installed (with a preview that runs go-at --show), else a
+  numbered menu. go-atrm lets you mark several. "off" never asks. Scripts are
+  never asked anything: the command fails and lists the choices.
 
 LIST      go-at -l | go-atq [-a|--all] [--json]
   Table of ID, NAME, STATE, WHEN, DETAIL. States are plain words: queued,

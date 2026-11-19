@@ -124,6 +124,19 @@ Anywhere a job is expected you can use either: `go-atrm task-name`,
 or options), may contain letters, digits, `.`, `_`, `-`, and must be unique
 among queued and running jobs.
 
+Once a job has ended its name is free again, so a recurring job can keep one
+name (`backup`) and the history can hold many jobs called `backup`. A name that
+an active job has always means that job. A name that several *ended* jobs share
+is never guessed at: on a terminal you choose from them, anywhere else the
+command fails with the list and a non-zero exit, and you give a number or
+`--latest` (the newest):
+
+    go-at --log --latest backup
+
+Giving a new job (or renaming one) a name an active job has is refused; at a
+terminal you are offered `NAME-<job number>` or a new name instead. In a
+script it is always an error: `go-at -n NAME` never adds a suffix by itself.
+
 ## Finding and stopping a running job
 
 While a job runs the daemon keeps `<spool>/running/<id>.pid`, a bare number:
@@ -217,6 +230,39 @@ editor. The interactive `at>` prompt tells you about `--compose` when you start.
 - Both keep the job's number, environment and commands: nothing is removed and
   re-created. Only queued/waiting jobs can be changed; if a job starts first,
   nothing is applied (the same locking as `--edit`).
+
+Ended jobs can be renamed too (`go-at --rename 27 W11-Eagles`), which is how a
+finished job is made easy to find. If you give the arguments the wrong way round
+(`--rename W11-Eagles 27`) go-at says so and shows the right order.
+
+## Copying a job, and looking at jobs
+
+    go-at --copy backup tomorrow 3am               # commands of job "backup", opens your editor
+    go-at --copy 41 --no-edit -n again +2h         # as is
+    go-at --copy ~/jobs/weekly.sh 9am sunday       # from a file
+
+- **`--copy JOB-or-FILE TIME...`** makes a new job from the commands of a
+  queued, running or ended job (ended jobs need `keep_commands`, the default),
+  or from a file. It is a path when it has a `/` in it or starts with `~`;
+  otherwise it is a job number or name. The copy runs in the *current*
+  environment and directory (not the original's), keeps `--nice`, `--batch`
+  and the shell of the original (give `--nice` or `-s` to override), needs a
+  `TIME`, and opens your editor on the commands unless `--no-edit`. It cannot
+  be combined with `-f` or `--compose`.
+- **`--show [JOB]`** prints one job in full: state, times, result, options, its
+  commands and the end of its output.
+- **`go-atq --browse`** (or `go-at --browse`) lets you pick from all jobs,
+  queued and ended, and shows the one you choose.
+
+### Choosing a job
+
+When a command that needs a job gets none (`go-at --show`, `-c`, `--log`,
+`--edit`, `--reschedule`, `--rename NEWNAME`, `go-atrm`) and you are at a
+terminal, you choose. The `picker` setting says how: `auto` (default: `fzf` if
+it is installed, else a numbered menu), `fzf`, `menu`, or `off`. With fzf the
+right-hand pane previews the job by running `go-at --show`; `go-atrm` can mark
+several (tab). fzf is only ever run as a separate program: nothing of it is in
+go-at. In a script (no terminal) nothing is asked and the command fails.
 
 ## Priority and batch
 

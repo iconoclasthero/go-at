@@ -71,6 +71,7 @@ func main() {
 	if err != nil {
 		die("%v", err)
 	}
+	configFlagPath = cfgFlag
 	if err := loadConfig(cfgFlag); err != nil {
 		die("%v", err)
 	}
@@ -137,10 +138,14 @@ const atUsage = `usage: go-at [options] TIME...        schedule commands (typed 
     -b, --batch         wait for low system load before starting (same as go-batch)
     -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
     -f FILE             read the commands from FILE
+        --copy SRC      new job from the commands of job or file SRC (needs TIME; opens your editor)
+        --no-edit       with --copy: don't open the editor
 
        go-at -e, --edit JOB                     edit a queued job's commands in $EDITOR
        go-at -R, --reschedule JOB [TIME...]     change when a queued job runs (no TIME: edit it in $EDITOR)
-       go-at --rename JOB NEWNAME               name or rename a queued job
+       go-at --rename JOB NEWNAME               name or rename a queued or ended job
+       go-at --show [JOB]                       one job in full: times, result, commands, output
+       go-at --browse | go-atq --browse         pick from all jobs, queued and ended, and show it
        go-at -l | go-atq [-a|--all] [--json]   list jobs: queued, waiting, running (--all adds ended ones)
        go-at -c JOB                             print the script of a queued or running job
        go-at --log JOB                          print a job's output
@@ -148,7 +153,8 @@ const atUsage = `usage: go-at [options] TIME...        schedule commands (typed 
        go-atrm -k [-s SIGNAL] JOB...            stop running jobs (default signal TERM)
        go-atd [-d]                              the daemon that runs jobs (-d: in the background)
 
-JOB is a number or a name.
+JOB is a number or a name. A name that several ended jobs share needs a number, or
+--latest for the newest. Without JOB, on a terminal, you choose (picker: see --show-config).
 
 TIME examples:
   go-at 17:30                          go-at 9:30:15 tomorrow        go-at noon
@@ -165,7 +171,7 @@ func cmdAt(args []string) {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, atUsage) }
 	var name, file, shellFlag string
 	var nice int
-	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit, compose, resched, rename bool
+	var batch, list, rm, rm2, cat, all, asJSON, showLogFlag, edit, compose, resched, rename, show, browse, copyJob, noEdit, latest bool
 	fs.StringVar(&name, "n", "", "")
 	fs.StringVar(&name, "name", "", "")
 	fs.IntVar(&nice, "nice", 0, "")
@@ -188,10 +194,19 @@ func cmdAt(args []string) {
 	fs.BoolVar(&resched, "reschedule", false, "")
 	fs.BoolVar(&resched, "R", false, "")
 	fs.BoolVar(&rename, "rename", false, "")
+	fs.BoolVar(&show, "show", false, "")
+	fs.BoolVar(&browse, "browse", false, "")
+	fs.BoolVar(&copyJob, "copy", false, "")
+	fs.BoolVar(&noEdit, "no-edit", false, "")
+	fs.BoolVar(&latest, "latest", false, "")
 	oldQueue := fs.String("q", "", "")
 	fs.Parse(args)
+	latestFlag = latest
 
 	switch {
+	case list && browse, browse:
+		openSpool().browse()
+		return
 	case list:
 		listJobs(all, asJSON)
 		return
@@ -204,41 +219,57 @@ func cmdAt(args []string) {
 	case showLogFlag:
 		showLog(fs.Args())
 		return
-	case edit:
-		if len(fs.Args()) != 1 {
-			die("usage: go-at --edit JOB   (JOB is a number or a name)")
+	case show:
+		if len(fs.Args()) > 1 {
+			die("usage: go-at --show [JOB]   (JOB is a number or a name)")
 		}
-		msg, err := openSpool().EditJob(fs.Arg(0))
+		sp := openSpool()
+		sp.showJob(sp.jobFor(optArg(fs.Args()), anyJob))
+		return
+	case edit:
+		if len(fs.Args()) > 1 {
+			die("usage: go-at --edit [JOB]   (JOB is a number or a name; without it you choose from the queue)")
+		}
+		sp := openSpool()
+		msg, err := sp.EditJob(sp.jobFor(optArg(fs.Args()), queuedJob).ref())
 		if err != nil {
 			die("%v", err)
 		}
 		fmt.Fprintln(os.Stderr, msg)
 		return
 	case resched:
-		if len(fs.Args()) < 1 {
-			die("usage: go-at --reschedule JOB [TIME...]   (JOB is a number or a name; without TIME the time opens in your editor)")
+		sp := openSpool()
+		var ref string
+		var spec string
+		if len(fs.Args()) > 0 {
+			ref, spec = fs.Arg(0), strings.Join(fs.Args()[1:], " ")
 		}
-		msg, err := openSpool().RescheduleJob(fs.Arg(0), strings.Join(fs.Args()[1:], " "))
+		msg, err := sp.RescheduleJob(sp.jobFor(ref, queuedJob).ref(), spec)
 		if err != nil {
 			die("%v", err)
 		}
 		fmt.Fprintln(os.Stderr, msg)
 		return
 	case rename:
-		if len(fs.Args()) != 2 {
-			die("usage: go-at --rename JOB NEWNAME   (JOB is a number or a name)")
-		}
-		msg, err := openSpool().RenameJob(fs.Arg(0), fs.Arg(1))
-		if err != nil {
-			die("%v", err)
-		}
-		fmt.Fprintln(os.Stderr, msg)
+		renameCmd(fs.Args())
 		return
+	}
+
+	if copyJob && file != "" {
+		die("--copy takes its commands from SRC; -f cannot be combined with it")
+	}
+	if copyJob && compose {
+		die("--copy already opens the commands in your editor; --compose is not needed (use --no-edit to skip the editor)")
 	}
 
 	if *oldQueue != "" {
 		die("queue letters are gone: use --nice N to lower priority and --batch to wait for low load")
 	}
+	if noEdit && !copyJob {
+		die("--no-edit only applies to --copy")
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if nice < 0 || nice > 19 {
 		die("--nice must be between 0 and 19 (go-at never raises priority)")
 	}
@@ -246,8 +277,29 @@ func cmdAt(args []string) {
 		die("bad job name %q: start with a letter, then letters, digits, '.', '_' or '-' (up to 64 characters)", name)
 	}
 
-	spec := strings.Join(fs.Args(), " ")
-	if batch && spec == "" {
+	sp := openSpool()
+	rest := fs.Args()
+	var src copySource
+	if copyJob {
+		if len(rest) < 2 {
+			die("usage: go-at --copy [-n NAME] [--nice N] [-b] [-s SHELL] [--no-edit] SRC TIME...\n  SRC is a job (number or name) or a file (./name.sh, ~/x.sh, /path); TIME is when the copy runs")
+		}
+		var err error
+		if src, err = sp.loadCopySource(rest[0]); err != nil {
+			fatal(err)
+		}
+		rest = rest[1:]
+		// the copy keeps the source's settings unless told otherwise
+		if !set["nice"] {
+			nice = src.nice
+		}
+		if !batch {
+			batch = src.batch
+		}
+	}
+
+	spec := strings.Join(rest, " ")
+	if batch && spec == "" && !copyJob {
 		spec = "now"
 	}
 	if strings.TrimSpace(spec) == "" {
@@ -259,9 +311,30 @@ func cmdAt(args []string) {
 		die("%v", err)
 	}
 
-	shell := resolveShell(shellFlag)
+	// settle the name before the commands are typed, so that a clash costs nothing
+	suffixID := false
+	if name != "" {
+		var err error
+		if name, suffixID, err = sp.settleName(name, 0); err != nil {
+			fatal(err)
+		}
+	}
+
+	shellName := shellFlag
+	if shellName == "" && src.shell != "" {
+		if _, err := os.Stat(src.shell); err == nil {
+			shellName = src.shell
+		}
+	}
+	shell := resolveShell(shellName)
 	var commands string
-	if compose {
+	switch {
+	case copyJob:
+		commands = src.commands
+		if !noEdit {
+			commands = composeCommands(sp, src.commands, shell)
+		}
+	case compose:
 		// -f FILE with --compose: the file's text is the starting point in the editor
 		initial := ""
 		if file == "-" {
@@ -274,23 +347,14 @@ func cmdAt(args []string) {
 			}
 			initial = string(b)
 		}
-		editor, err := editorCommand("--compose")
-		if err != nil {
-			die("%v", err)
-		}
-		sp := openSpool()
-		commands, err = editText(editor, initial, "go-at-new-job.sh", shell, sp.path("compose.rejected"))
-		if err != nil {
-			die("%v; job not created", err)
-		}
-	} else {
+		commands = composeCommands(sp, initial, shell)
+	default:
 		commands = readCommands(file, runAt)
 	}
 	if strings.TrimSpace(commands) == "" {
 		die("no commands given; job not created")
 	}
-	sp := openSpool()
-	id, err := sp.AddJob(Submission{RunAt: runAt, Name: name, Nice: nice, Batch: batch, Shell: shell, Commands: commands})
+	id, name, err := sp.AddJob(Submission{RunAt: runAt, Name: name, Nice: nice, Batch: batch, Shell: shell, Commands: commands, SuffixID: suffixID})
 	if err != nil {
 		die("%v", err)
 	}
@@ -299,6 +363,9 @@ func cmdAt(args []string) {
 		label = fmt.Sprintf("%d (%s)", id, name)
 	}
 	fmt.Fprintf(os.Stderr, "job %s at %s\n", label, fmtWhenZone(runAt))
+	if copyJob {
+		fmt.Fprintf(os.Stderr, "  copied from %s\n", src.desc)
+	}
 	if !sp.DaemonRunning() {
 		if cfgBool("AT_AUTOSTART", false) {
 			if started, pid, err := detachDaemon(sp); err != nil {
@@ -310,6 +377,65 @@ func cmdAt(args []string) {
 			fmt.Fprintln(os.Stderr, "warning: go-atd is not running, so this job will not run until you start it (run: go-atd -d)")
 		}
 	}
+}
+
+// composeCommands opens initial in the editor and returns what was saved.
+func composeCommands(sp *Spool, initial, shell string) string {
+	editor, err := editorCommand("--compose")
+	if err != nil {
+		die("%v", err)
+	}
+	commands, err := editText(editor, initial, "go-at-new-job.sh", shell, sp.path("compose.rejected"))
+	if err != nil {
+		die("%v; job not created", err)
+	}
+	return commands
+}
+
+func optArg(args []string) string {
+	if len(args) == 1 {
+		return args[0]
+	}
+	return ""
+}
+
+// renameCmd is go-at --rename JOB NEWNAME. With only the name, on a terminal,
+// you choose the job.
+func renameCmd(args []string) {
+	sp := openSpool()
+	var ref, name string
+	switch len(args) {
+	case 2:
+		ref, name = args[0], args[1]
+		// the arguments the wrong way round: "--rename W11-Eagles 27"
+		if _, err := sp.Resolve(ref, resolveOpts{history: true, latest: true}); err != nil {
+			if _, err2 := sp.Resolve(name, resolveOpts{history: true, latest: true}); err2 == nil {
+				die("no such job: %s; did you mean:  go-at --rename %s %s", ref, name, ref)
+			}
+		}
+	case 1:
+		if !canPick() {
+			die("usage: go-at --rename JOB NEWNAME   (JOB is a number or a name)")
+		}
+		name = args[0]
+	default:
+		die("usage: go-at --rename JOB NEWNAME   (JOB is a number or a name; with just NEWNAME you choose the job)")
+	}
+	if !nameRe.MatchString(name) {
+		die("bad job name %q: start with a letter, then letters, digits, '.', '_' or '-' (up to 64 characters)", name)
+	}
+	j := sp.jobFor(ref, anyJob)
+	if j.Active() {
+		var err error
+		if name, _, err = sp.settleName(name, j.ID); err != nil {
+			fatal(err)
+		}
+	}
+	msg, err := sp.RenameJob(j, name)
+	if err != nil {
+		die("%v", err)
+	}
+	fmt.Fprintln(os.Stderr, msg)
 }
 
 func readCommands(file string, runAt time.Time) string {
@@ -391,13 +517,18 @@ func readInteractive(runAt time.Time) (cmds string, cancelled bool) {
 func cmdList(args []string) {
 	fs := flag.NewFlagSet("go-atq", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, "usage: go-atq [-a|--all] [--json]\n  lists queued, waiting and running jobs; --all adds jobs that have ended\n")
+		fmt.Fprint(os.Stderr, "usage: go-atq [-a|--all] [--json] [--browse]\n  lists queued, waiting and running jobs; --all adds jobs that have ended\n  --browse: choose from all jobs, with their commands and output shown beside the list\n")
 	}
-	var all, asJSON bool
+	var all, asJSON, browse bool
 	fs.BoolVar(&all, "a", false, "")
 	fs.BoolVar(&all, "all", false, "")
 	fs.BoolVar(&asJSON, "json", false, "")
+	fs.BoolVar(&browse, "browse", false, "")
 	fs.Parse(args)
+	if browse {
+		openSpool().browse()
+		return
+	}
 	listJobs(all, asJSON)
 }
 
@@ -451,6 +582,31 @@ func describe(j Job) (when, detail string) {
 	return when, strings.Join(parts, ", ")
 }
 
+// jobTable renders jobs as aligned lines under a header: the go-atq listing,
+// and the rows of the picker and of the "which one?" messages. Empty for no jobs.
+func jobTable(jobs []Job) []string {
+	if len(jobs) == 0 {
+		return nil
+	}
+	var buf strings.Builder
+	tw := tabwriter.NewWriter(&buf, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tWHEN\tDETAIL")
+	for _, j := range jobs {
+		name := j.Name
+		if name == "" {
+			name = "-"
+		}
+		when, detail := describe(j)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", j.ID, name, j.State, when, detail)
+	}
+	tw.Flush()
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	return lines
+}
+
 func listJobs(all, asJSON bool) {
 	sp := openSpool()
 	q, err := sp.Queued()
@@ -480,22 +636,8 @@ func listJobs(all, asJSON bool) {
 		enc.Encode(jobs)
 		return
 	}
-	if len(jobs) > 0 {
-		var buf strings.Builder
-		tw := tabwriter.NewWriter(&buf, 0, 8, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tSTATE\tWHEN\tDETAIL")
-		for _, j := range jobs {
-			name := j.Name
-			if name == "" {
-				name = "-"
-			}
-			when, detail := describe(j)
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", j.ID, name, j.State, when, detail)
-		}
-		tw.Flush()
-		for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
-			fmt.Println(strings.TrimRight(line, " "))
-		}
+	for _, line := range jobTable(jobs) {
+		fmt.Println(line)
 	}
 	overdue := 0
 	for _, j := range q {
@@ -526,14 +668,34 @@ func cmdRemove(args []string) {
 }
 
 func removeJobs(refs []string, kill bool, sigStr string) {
-	if len(refs) == 0 {
-		die("usage: go-atrm [-k] JOB...")
-	}
 	sig, err := parseSignal(sigStr)
 	if err != nil {
 		die("%v", err)
 	}
 	sp := openSpool()
+	if len(refs) == 0 {
+		if !canPick() {
+			die("usage: go-atrm [-k] JOB...   (with no JOB, at a terminal, you choose from the queue)")
+		}
+		kind := activeJob
+		if kill {
+			kind = runningJob
+		}
+		cands, err := sp.candidates(kind)
+		if err != nil {
+			die("%v", err)
+		}
+		if len(cands) == 0 {
+			die("there are no jobs to choose from")
+		}
+		got, err := pickJobs(cands, "job", true)
+		if err != nil {
+			fatal(err)
+		}
+		for _, j := range got {
+			refs = append(refs, j.ref())
+		}
+	}
 	rc := 0
 	fail := func(format string, a ...any) {
 		fmt.Fprintf(os.Stderr, "go-at: "+format+"\n", a...)
@@ -585,15 +747,13 @@ func removeJobs(refs []string, kill bool, sigStr string) {
 // ---- inspecting ------------------------------------------------------------
 
 func catJobs(refs []string) {
-	if len(refs) == 0 {
-		die("usage: go-at -c JOB")
-	}
 	sp := openSpool()
+	if len(refs) == 0 {
+		refs = []string{""} // choose one, at a terminal
+	}
 	for _, ref := range refs {
-		j, err := sp.Find(ref, true)
-		if err != nil {
-			die("%v", err)
-		}
+		j := sp.jobFor(ref, anyJob)
+		ref = j.ref()
 		if j.path == "" {
 			// ended: only the commands you typed are kept, never the environment
 			b, err := os.ReadFile(sp.commandsPath(j.ID))
@@ -612,14 +772,11 @@ func catJobs(refs []string) {
 }
 
 func showLog(refs []string) {
-	if len(refs) != 1 {
-		die("usage: go-at --log JOB")
+	if len(refs) > 1 {
+		die("usage: go-at --log [JOB]")
 	}
 	sp := openSpool()
-	j, err := sp.Find(refs[0], true)
-	if err != nil {
-		die("%v", err)
-	}
+	j := sp.jobFor(optArg(refs), anyJob)
 	f, err := os.Open(j.Log)
 	if err != nil {
 		die("job %s has no output yet (it is %s)", j.label(), j.State)
