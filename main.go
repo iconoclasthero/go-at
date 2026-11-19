@@ -63,6 +63,10 @@ func main() {
 			return
 		}
 		if a == "-h" || a == "--help" || a == "-help" {
+			io.WriteString(os.Stdout, atUsage)
+			return
+		}
+		if a == "--HELP" || a == "-HELP" {
 			io.WriteString(os.Stdout, helpText) // not fmt.Print: the text contains % sections
 			return
 		}
@@ -132,38 +136,13 @@ func resolveShell(flagVal string) string {
 	return ""
 }
 
-const atUsage = `usage: go-at [options] TIME...        schedule commands (typed at the at> prompt, piped in, or -f FILE)
-    -n, --name NAME     name the job (starts with a letter; letters, digits, . _ -)
-        --nice N        run at lower priority, N = 0..19
-    -b, --batch         wait for low system load before starting (same as go-batch)
-    -s SHELL            shell that runs the job (default bash, or $AT_SHELL)
-    -f FILE             read the commands from FILE
-        --copy SRC      new job from the commands of job or file SRC (needs TIME; opens your editor)
-        --no-edit       with --copy: don't open the editor
-
-       go-at -e, --edit JOB                     edit a queued job's commands in $EDITOR
-       go-at -R, --reschedule JOB [TIME...]     change when a queued job runs (no TIME: edit it in $EDITOR)
-       go-at --rename JOB NEWNAME               name or rename a queued or ended job
-       go-at --show [JOB]                       one job in full: times, result, commands, output
-       go-at --browse | go-atq --browse         pick from all jobs, queued and ended, and show it
-       go-at -l | go-atq [-a|--all] [--json]   list jobs: queued, waiting, running (--all adds ended ones)
-       go-at -c JOB                             print the script of a queued or running job
-       go-at --log JOB                          print a job's output
-       go-atrm JOB...                           remove queued jobs
-       go-atrm -k [-s SIGNAL] JOB...            stop running jobs (default signal TERM)
-       go-atd [-d]                              the daemon that runs jobs (-d: in the background)
-
-JOB is a number or a name. A name that several ended jobs share needs a number, or
---latest for the newest. Without JOB, on a terminal, you choose (picker: see --show-config).
-
-TIME examples:
-  go-at 17:30                          go-at 9:30:15 tomorrow        go-at noon
-  go-at now + 2 hours 55 minutes       go-at +2h55m                  go-at in 90 seconds
-  go-at 11-25-2026 09:30 + 2 hours 55 minutes
-  go-at sunday 9:30 am ET + 1 hour     go-at Nov 25 2026 9am         go-at next friday
-Jobs only run while go-atd is running: start it with "go-atd -d" (background)
-or "go-atd" (foreground). Set AT_AUTOSTART=1 to have go-at start it when it
-finds none.
+const atUsage = `usage: go-at [-n NAME] [--nice N] [-b] [-f FILE | -C] TIME...    schedule commands
+       go-at --copy JOB|FILE [--no-edit] TIME...                  new job from an old one
+       go-at -l | -c | --show | --log | --browse [JOB]           list, script, details, output
+       go-at -e | -R | --rename JOB ...                           change a queued job
+       go-atq [-a] | go-atrm [-k] [JOB...] | go-atd [-d]          list, remove or stop, daemon
+TIME: 17:30   noon   tomorrow 9am   now + 2 hours   sunday 9:30 am ET
+JOB is a number or a name.  --help: this text    --HELP: everything    docs/: the manual
 `
 
 func cmdAt(args []string) {

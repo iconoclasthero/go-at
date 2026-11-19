@@ -1,7 +1,7 @@
 package main
 
-// Printed by -h / --help on any of the go-* commands. The bare "go-at" with no
-// arguments prints the shorter atUsage instead.
+// Printed by --HELP on any of the go-* commands. -h / --help, and the error for
+// a command that was not understood, print the short atUsage instead.
 const helpText = `go-at: at, atq, atrm, batch and atd in one program.
 
 SCHEDULE   go-at [options] TIME...
@@ -71,10 +71,12 @@ LIST      go-at -l | go-atq [-a|--all] [--json]
 
 INSPECT    go-at -c JOB      print a job's script (ended jobs: the commands you typed)
            go-at --log JOB   print a job's output (also kept after it ends)
+           go-at --show JOB  everything about one job: times, result, commands, output end
 
 STOP       go-atrm JOB...                  remove queued jobs (go-at -d / -r do the same)
            go-atrm -k [-s SIGNAL] JOB...   signal running jobs' whole process
-                                           group (default TERM; -s KILL, 9...)
+                                           group (default TERM; -s KILL, 9...);
+                                           long forms: --kill, --signal
   The pid is checked against the recorded start time first, so a recycled
   pid is never signalled.
 
@@ -110,6 +112,7 @@ CONFIGURATION
   batch_load     AT_BATCH_LOAD    1.5  (load average below which --batch starts)
   keep_days      AT_KEEP_DAYS     30   (history, logs and saved commands)
   keep_commands  AT_KEEP_COMMANDS yes  (save commands of ended jobs; go-at -c)
+  picker         AT_PICKER        auto (auto, fzf, menu or off; see PICKER)
   time_format    AT_TIME_FORMAT   12h  (am/pm; or 24h, or % sections, see below)
 
   time_format: "12h" (Sun Nov 15 11:15:00 PM 2026), "24h" (Sun Nov 15 23:15:00
@@ -121,7 +124,7 @@ CONFIGURATION
 
 ENVIRONMENT
   AT_CONFIG        path of the config file
-  VISUAL, EDITOR   editor for --compose and --edit
+  VISUAL, EDITOR   editor for --compose, --edit, --copy and --reschedule
   Inside a job: AT_JOB_ID and, if named, AT_JOB_NAME.
 
 Classic -q queue letters are not used: use --nice and --batch.
