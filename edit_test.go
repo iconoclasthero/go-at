@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -294,12 +295,49 @@ func TestJobDoesNotInheritDaemonEnvironment(t *testing.T) {
 
 func TestHelp(t *testing.T) {
 	e := newEnv(t)
-	for _, c := range [][]string{{"at", "--help"}, {"at", "-h"}, {"atq", "--help"}, {"atrm", "--help"}, {"atd", "--help"}} {
+	// --help / -h is short, the same for every command, and says where more is
+	for _, c := range [][]string{{"at", "--help"}, {"at", "-h"}, {"atq", "--help"}, {"atrm", "--help"}, {"atd", "-h"}} {
+		out, se, code := e.run("", c[0], c[1:]...)
+		if code != 0 || se != "" || strings.Count(out, "\n") > 12 || !strings.Contains(out, "--HELP") {
+			t.Errorf("%v: code %d, %d lines, stderr %q:\n%s", c, code, strings.Count(out, "\n"), se, out)
+		}
+	}
+	// --HELP is everything
+	for _, c := range [][]string{{"at", "--HELP"}, {"atq", "--HELP"}, {"atrm", "--HELP"}, {"atd", "--HELP"}} {
 		out, _, code := e.run("", c[0], c[1:]...)
 		for _, want := range []string{"--compose", "--edit", "--name", "--nice", "--batch", "go-atrm -k", "waiting", "AT_SPOOL", "terminated"} {
 			if code != 0 || !strings.Contains(out, want) {
 				t.Errorf("%v: code %d, help lacks %q", c, code, want)
 			}
+		}
+	}
+	// a command that is not understood prints the short text, not the manual
+	_, se, code := e.run("", "at")
+	if code == 0 || strings.Count(se, "\n") > 12 {
+		t.Errorf("bare go-at: code %d, %d lines of usage", code, strings.Count(se, "\n"))
+	}
+}
+
+// Every option the program accepts must be described by --HELP, so the manual
+// cannot fall behind the code again.
+func TestHelpMentionsEveryOption(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`fs\.(?:Bool|String|Int)Var\(&\w+, "([a-zA-Z-]+)"`)
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		flag := "--" + m[1]
+		if len(m[1]) == 1 {
+			flag = "-" + m[1]
+		}
+		if !strings.Contains(helpText, flag) {
+			t.Errorf("--HELP does not mention %s", flag)
+		}
+	}
+	for _, key := range settingDefs {
+		if !strings.Contains(helpText, key.key) && !strings.Contains(helpText, key.env) {
+			t.Errorf("--HELP does not mention the setting %s", key.key)
 		}
 	}
 }
