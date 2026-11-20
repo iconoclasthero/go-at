@@ -87,22 +87,22 @@ func runDaemon(s *Spool) error {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	// which build is running matters after an upgrade: a daemon keeps its old code until restarted
-	fmt.Fprintf(os.Stderr, "go-atd: version %s\n", strings.TrimPrefix(versionString(), "go-at "))
-	fmt.Fprintf(os.Stderr, "go-atd: watching %s\n", s.Dir)
+	dlog("version %s", strings.TrimPrefix(versionString(), "go-at "))
+	dlog("watching %s", s.Dir)
 	d.sweep()
 	d.prune()
 	lastPrune := time.Now()
 	for {
 		select {
 		case <-sig:
-			fmt.Fprintln(os.Stderr, "go-atd: shutting down, waiting for running jobs")
+			dlog("shutting down, waiting for running jobs")
 			d.wg.Wait()
 			return nil
 		case <-tick.C:
 		}
 		jobs, err := s.Queued()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "go-atd:", err)
+			dlog("%v", err)
 			continue
 		}
 		now := time.Now()
@@ -157,7 +157,7 @@ func (d *daemon) launch(j Job) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // own session: pid == pgid
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(logf, "[go-at: job %s could not start: %v]\n", j.label(), err)
+		fmt.Fprintf(logf, "[%s go-at: job %s could not start: %v]\n", stamp(), j.label(), err)
 		logf.Close()
 		code := 127
 		d.finish(j, started, 0, &code, "", err.Error())
@@ -168,9 +168,10 @@ func (d *daemon) launch(j Job) {
 		syscall.Setpriority(syscall.PRIO_PROCESS, pid, j.Nice)
 	}
 	if err := s.writeProc(j.ID, pid, started); err != nil {
-		fmt.Fprintf(os.Stderr, "go-atd: job %s: cannot write pid file: %v\n", j.label(), err)
+		dlog("job %s: cannot write pid file: %v", j.label(), err)
 	}
-	fmt.Fprintf(logf, "[go-at: job %s started, process group %d]\n", j.label(), pid)
+	fmt.Fprintf(logf, "[%s go-at: job %s started, process group %d]\n", stamp(), j.label(), pid)
+	dlog("job %s started, process group %d", j.label(), pid)
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -195,9 +196,9 @@ func (d *daemon) launch(j Job) {
 		}
 		switch {
 		case sigStr != "":
-			fmt.Fprintf(logf, "%s[go-at: job %s terminated by %s after %s]\n", lead, j.label(), sigStr, time.Since(started).Round(time.Millisecond))
+			fmt.Fprintf(logf, "%s[%s go-at: job %s terminated by %s after %s]\n", lead, stamp(), j.label(), sigStr, time.Since(started).Round(time.Millisecond))
 		case code != nil:
-			fmt.Fprintf(logf, "%s[go-at: job %s exited %d after %s]\n", lead, j.label(), *code, time.Since(started).Round(time.Millisecond))
+			fmt.Fprintf(logf, "%s[%s go-at: job %s exited %d after %s]\n", lead, stamp(), j.label(), *code, time.Since(started).Round(time.Millisecond))
 		}
 		d.finish(j, started, pid, code, sigStr, note)
 	}()
@@ -240,7 +241,7 @@ func (d *daemon) finish(j Job, started time.Time, pid int, code *int, sigStr, no
 		rec.State = stFailed
 	}
 	if err := s.writeHistory(rec); err != nil {
-		fmt.Fprintf(os.Stderr, "go-atd: job %s: cannot write history: %v\n", j.label(), err)
+		dlog("job %s: cannot write history: %v", j.label(), err)
 	}
 	s.saveCommands(j.ID, s.path("running", strconv.Itoa(j.ID)))
 	os.Remove(s.path("running", strconv.Itoa(j.ID)))
@@ -255,7 +256,7 @@ func (d *daemon) finish(j Job, started time.Time, pid int, code *int, sigStr, no
 	case note != "":
 		detail += " (" + note + ")"
 	}
-	fmt.Fprintf(os.Stderr, "go-atd: job %s %s; output in %s\n", j.label(), detail, rec.Log)
+	dlog("job %s %s; output in %s", j.label(), detail, rec.Log)
 }
 
 // sweep deals with entries in running/ that this daemon is not running itself:
@@ -284,7 +285,7 @@ func (d *daemon) sweep() {
 		if pid, err := s.verifyJobPID(id); err == nil || errors.Is(err, errUnverified) {
 			if !d.seen[id] {
 				d.seen[id] = true
-				fmt.Fprintf(os.Stderr, "go-atd: job %s is still running from a previous daemon (process group %d); leaving it alone\n", j.label(), pid)
+				dlog("job %s is still running from a previous daemon (process group %d); leaving it alone", j.label(), pid)
 			}
 			continue
 		}
@@ -298,7 +299,7 @@ func (d *daemon) sweep() {
 			rec.Ended = tp(time.Now())
 			rec.Log = s.path("logs", e.Name()+".log")
 			s.writeHistory(rec)
-			fmt.Fprintf(os.Stderr, "go-atd: job %s was interrupted by a previous shutdown; not re-running it\n", j.label())
+			dlog("job %s was interrupted by a previous shutdown; not re-running it", j.label())
 		}
 		// keep what the user typed (not the captured environment) for diagnosis
 		s.saveCommands(id, s.path("running", e.Name()))
@@ -363,4 +364,16 @@ func detachDaemon(s *Spool) (started bool, pid int, err error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false, pid, fmt.Errorf("go-atd did not start; see %s", s.path("atd.log"))
+}
+
+// stamp is the time written in front of every line the daemon logs and in the
+// markers go-at adds to a job's log: local time with its offset, so that lines
+// can be sorted, compared and traced across a daylight-saving change. It does
+// not follow time_format, which is for people reading go-atq.
+func stamp() string { return time.Now().Format("2006-01-02 15:04:05 -0700") }
+
+// dlog writes one line of the daemon's log (stderr: supervisord, systemd or
+// atd.log when detached).
+func dlog(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "%s go-atd: %s\n", stamp(), fmt.Sprintf(format, a...))
 }

@@ -85,6 +85,8 @@ DAEMON     go-atd [-d]
   -d backgrounds it and does nothing if one is already running, so it is safe
   in a cron watchdog. AT_AUTOSTART=1 makes go-at start it when none is running.
   Runs as the user who starts it and only handles that user's jobs.
+  Every line it logs starts with a timestamp (local time and UTC offset); so do
+  the start and exit markers go-at writes into a job's log.
 
 TIME EXAMPLES
   go-at 17:30                          go-at 9:30:15 tomorrow

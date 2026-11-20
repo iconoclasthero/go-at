@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -63,5 +65,36 @@ func TestDaemonLogsItsVersion(t *testing.T) {
 	line := log[i : i+strings.Index(log[i:], "\n")]
 	if i < 0 || j < i || !strings.Contains(line, runtime.GOOS+"/"+runtime.GOARCH) || strings.Contains(line, "go-at go-at") {
 		t.Errorf("version line missing, misplaced or malformed:\n%s", log)
+	}
+}
+
+// Every line the daemon logs, and the markers go-at adds to a job's log, start
+// with a timestamp, for tracing.
+func TestLogTimestamps(t *testing.T) {
+	e := newEnv(t)
+	id := e.submit("echo out\nexit 3\n", "-n", "stamped", "now", "+", "1", "second")
+	stop, stderr := e.startDaemon()
+	defer stop()
+	waitFor(t, "job to end", 10*time.Second, func() bool {
+		j, ok := e.job("stamped", true)
+		return ok && j.State == "failed"
+	})
+	ts := `\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}`
+	lineRe := regexp.MustCompile(`^` + ts + ` go-atd: `)
+	log := strings.TrimSpace(stderr.String())
+	for _, l := range strings.Split(log, "\n") {
+		if !lineRe.MatchString(l) {
+			t.Errorf("daemon log line without a timestamp: %q", l)
+		}
+	}
+	for _, want := range []string{"go-atd: version ", "go-atd: watching ", fmt.Sprintf("go-atd: job %d (stamped) started, process group", id), "failed"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("daemon log lacks %q:\n%s", want, log)
+		}
+	}
+	out, _, _ := e.run("", "at", "--log", "stamped")
+	markers := regexp.MustCompile(`(?m)^\[`+ts+` go-at: job \d+ \(stamped\) (started, process group \d+|exited 3 after \S+)\]$`).FindAllString(out, -1)
+	if len(markers) != 2 || !strings.Contains(out, "\nout\n") {
+		t.Errorf("want a stamped start and exit marker around the job's own output, got:\n%s", out)
 	}
 }

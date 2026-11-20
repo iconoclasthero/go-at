@@ -79,3 +79,27 @@ download or transfer can repeat side effects. If a job must survive crashes,
 make the script itself idempotent and resumable and have it write a "succeeded"
 marker only after the last step. The commands of an interrupted job are kept in
 `<spool>/history/<id>.sh`.
+
+### Logs and timestamps
+
+Everything the daemon says goes to its stderr (supervisord's `stderr_logfile`,
+the journal under systemd, or `<spool>/atd.log` when it detached itself), one
+line each, starting with a timestamp:
+
+    2026-11-20 00:04:12 -0500 go-atd: version main 6ae6bd7 (...), go1.24.7 linux/amd64, static
+    2026-11-20 00:04:12 -0500 go-atd: watching /home/you/.local/state/at
+    2026-11-22 15:55:00 -0500 go-atd: job 27 (W11-Eagles) started, process group 41207
+    2026-11-22 18:41:09 -0500 go-atd: job 27 (W11-Eagles) finished (exit 0); output in /home/you/.local/state/at/logs/27.log
+
+A job's own log (`go-at --log JOB`, `<spool>/logs/ID.log`) has a stamped marker
+when go-at started it and when it ended, around the job's own output:
+
+    [2026-11-22 15:55:00 -0500 go-at: job 27 (W11-Eagles) started, process group 41207]
+    ...whatever the job printed...
+    [2026-11-22 18:41:09 -0500 go-at: job 27 (W11-Eagles) exited 0 after 2h46m9s]
+
+The time is local with its UTC offset (so it sorts and compares across a
+daylight-saving change). It does not follow `time_format`, which is only for
+how `go-atq` shows times. The job's own output is not stamped line by line: it
+is written by your commands straight to the log, and go-at does not sit in
+between.
