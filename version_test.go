@@ -79,7 +79,7 @@ func TestLogTimestamps(t *testing.T) {
 		j, ok := e.job("stamped", true)
 		return ok && j.State == "failed"
 	})
-	ts := `\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}`
+	ts := `\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d` // what date -Is prints
 	lineRe := regexp.MustCompile(`^` + ts + ` go-atd: `)
 	log := strings.TrimSpace(stderr.String())
 	for _, l := range strings.Split(log, "\n") {
@@ -96,5 +96,33 @@ func TestLogTimestamps(t *testing.T) {
 	markers := regexp.MustCompile(`(?m)^\[`+ts+` go-at: job \d+ \(stamped\) (started, process group \d+|exited 3 after \S+)\]$`).FindAllString(out, -1)
 	if len(markers) != 2 || !strings.Contains(out, "\nout\n") {
 		t.Errorf("want a stamped start and exit marker around the job's own output, got:\n%s", out)
+	}
+}
+
+func TestLogTimeFormatSetting(t *testing.T) {
+	e := newEnv(t)
+	e.submit("echo hi\n", "-n", "fmt", "now", "+", "1", "second")
+	e.extra = []string{"AT_LOG_TIME_FORMAT=<%s>"}
+	stop, stderr := e.startDaemon()
+	defer stop()
+	waitFor(t, "job to end", 10*time.Second, func() bool { j, ok := e.job("fmt", true); return ok && j.State == "finished" })
+	if !regexp.MustCompile(`(?m)^<\d{10}> go-atd: watching`).MatchString(stderr.String()) {
+		t.Errorf("custom log format not used:\n%s", stderr.String())
+	}
+	if out, _, _ := e.run("", "at", "--log", "fmt"); !regexp.MustCompile(`\[<\d{10}> go-at: job \d+ \(fmt\) started`).MatchString(out) {
+		t.Errorf("custom log format not used in the job log:\n%s", out)
+	}
+	// a bad format is refused up front, from the environment and from the file
+	e.extra = []string{"AT_LOG_TIME_FORMAT=%Q"}
+	if _, se, code := e.run("", "atq"); code == 0 || !strings.Contains(se, "AT_LOG_TIME_FORMAT") {
+		t.Errorf("bad env format accepted: %d %q", code, se)
+	}
+	e.extra = nil
+	if _, se, code := e.run("", "at", "--config", writeConf(t, "log_time_format = %Q\n"), "-l"); code == 0 || !strings.Contains(se, "log_time_format") {
+		t.Errorf("bad config format accepted: %d %q", code, se)
+	}
+	out, _, _ := e.run("", "at", "--config", writeConf(t, "log_time_format = iso\n"), "--show-config")
+	if !strings.Contains(out, "log_time_format") {
+		t.Errorf("--show-config lacks the setting:\n%s", out)
 	}
 }

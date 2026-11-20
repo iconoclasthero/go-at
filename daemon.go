@@ -366,11 +366,39 @@ func detachDaemon(s *Spool) (started bool, pid int, err error) {
 	return false, pid, fmt.Errorf("go-atd did not start; see %s", s.path("atd.log"))
 }
 
+// logTimeFormat is what stamp() prints: ISO 8601 with the offset, exactly what
+// "date -Is" prints (2026-11-20T05:24:26-05:00), unless log_time_format says
+// otherwise. It is local time with its UTC offset, so lines sort, compare and
+// survive a daylight-saving change. It does not follow time_format, which is
+// for people reading go-atq.
+const logTimeFormatDefault = "%FT%T%:z"
+
+func logTimeFormatSpec() string {
+	v := strings.TrimSpace(cfg("AT_LOG_TIME_FORMAT"))
+	switch strings.ToLower(v) {
+	case "", "iso":
+		return logTimeFormatDefault
+	}
+	return v
+}
+
+func checkLogTimeFormat(v string) error {
+	if strings.EqualFold(strings.TrimSpace(v), "iso") {
+		return nil
+	}
+	_, err := strftime(time.Now(), v)
+	return err
+}
+
 // stamp is the time written in front of every line the daemon logs and in the
-// markers go-at adds to a job's log: local time with its offset, so that lines
-// can be sorted, compared and traced across a daylight-saving change. It does
-// not follow time_format, which is for people reading go-atq.
-func stamp() string { return time.Now().Format("2006-01-02 15:04:05 -0700") }
+// markers go-at adds to a job's log.
+func stamp() string {
+	s, err := strftime(time.Now(), logTimeFormatSpec())
+	if err != nil {
+		s, _ = strftime(time.Now(), logTimeFormatDefault)
+	}
+	return s
+}
 
 // dlog writes one line of the daemon's log (stderr: supervisord, systemd or
 // atd.log when detached).

@@ -66,6 +66,7 @@ var settingDefs = []settingDef{
 	{"autostart", "AT_AUTOSTART", "no", "go-at starts go-atd when none is running", checkBool},
 	{"keep_commands", "AT_KEEP_COMMANDS", "yes", "save the commands of ended jobs (go-at -c works on them)", checkBool},
 	{"picker", "AT_PICKER", "auto", "how a job is chosen when none is named: auto (fzf if installed, else a numbered menu), fzf, menu or off", checkPicker},
+	{"log_time_format", "AT_LOG_TIME_FORMAT", "iso", "timestamp on every daemon log line and job-log marker: iso (like date -Is) or a format of % sections, e.g. %s or %F %T", checkLogTimeFormat},
 	{"time_format", "AT_TIME_FORMAT", "12h", "how times are shown: 12h, 24h, or a format of % sections like %a %b %e %I:%M %p", checkTimeFormat},
 }
 
