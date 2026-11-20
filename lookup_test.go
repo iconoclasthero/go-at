@@ -361,12 +361,26 @@ func TestAtrmMultiSelectMenu(t *testing.T) {
 	p := e.pty("atrm")
 	p.expect("numbers like 1,3 or 2-4")
 	p.send("1,3-4\n")
+	p.expect("Remove 3 job(s)? [y/N]:")
+	p.send("y\n")
 	if _, code := p.finish(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, p.screen())
 	}
 	left := e.jobs()
 	if len(left) != 1 || left[0].ID != 2 {
 		t.Errorf("want only job 2 left, got %+v", left)
+	}
+	// anything but y changes nothing
+	p = e.pty("atrm")
+	p.expect("numbers like 1,3 or 2-4")
+	p.send("1\n")
+	p.expect("Remove 1 job(s)? [y/N]:")
+	p.send("\n")
+	if _, code := p.finish(); code != 130 {
+		t.Errorf("declined exit %d", code)
+	}
+	if n := len(e.jobs()); n != 1 {
+		t.Errorf("declining removed a job: %d left", n)
 	}
 }
 
@@ -433,4 +447,21 @@ func (e *env) cmdFile() string {
 	p := filepath.Join(e.spool, "typed.sh")
 	os.WriteFile(p, []byte("echo typed\n"), 0o600)
 	return p
+}
+
+// options may follow the source: --copy 27 -n NAME --nice 3 TIME...
+func TestCopyOptionsAfterSource(t *testing.T) {
+	e := newEnv(t)
+	e.submit("echo original\n", "-n", "orig", "now", "+", "1", "hour")
+	_, se, code := e.run("", "at", "--copy", "orig", "--no-edit", "-n", "W17-Titans", "--nice", "3", "01-03-2027", "1PM", "+", "2h", "55m")
+	if code != 0 {
+		t.Fatalf("%d %q", code, se)
+	}
+	j, ok := e.job("W17-Titans", false)
+	if !ok || j.Nice != 3 || !strings.Contains(e.script("W17-Titans"), "echo original") {
+		t.Errorf("copy with options after the source: %+v %v", j, ok)
+	}
+	if !strings.Contains(se, "03:55:00 PM") {
+		t.Errorf("the time was not read as 1PM + 2h55m: %q", se)
+	}
 }
