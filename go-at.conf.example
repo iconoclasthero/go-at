@@ -29,7 +29,7 @@
 # the timestamp at the start of every daemon log line and job-log marker:
 #   iso   (default)   what "date -Is" prints: 2026-11-20T05:24:26-05:00
 # or % sections, as below (plus %:z = -05:00, %s = epoch seconds, %N, %-d = unpadded):
-#log_time_format = iso
+#log_time_format = iso     # a bad value is reported in the daemon log and iso is used
 #log_time_format = %F %T %z
 #log_time_format = %s
 

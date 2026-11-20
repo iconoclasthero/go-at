@@ -108,6 +108,11 @@ takes the same `%` sections as `time_format` (see
 
     log_time_format = %F %T %z         # 2026-11-22 15:55:00 -0500
     log_time_format = %s               # 1795380900  (epoch seconds)
-    log_time_format = %-m/%-d %I:%M:%S %p   # 11/22 03:55:00 PM, if you must The job's own output is not stamped line by line: it
+    log_time_format = %-m/%-d %I:%M:%S %p   # 11/22 03:55:00 PM, if you must
+
+A format that does not work never stops anything. Every command still runs,
+the daemon still starts and runs your jobs, it says so once in its log
+(`go-atd: log_time_format "%Q" is not usable (...); using iso, ...`) and stamps
+with the default. `go-at --show-config` shows the same warning. The job's own output is not stamped line by line: it
 is written by your commands straight to the log, and go-at does not sit in
 between.

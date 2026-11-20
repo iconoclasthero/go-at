@@ -84,11 +84,6 @@ func main() {
 			die("AT_TIME_FORMAT: %v", err)
 		}
 	}
-	if v := os.Getenv("AT_LOG_TIME_FORMAT"); v != "" {
-		if err := checkLogTimeFormat(v); err != nil {
-			die("AT_LOG_TIME_FORMAT: %v", err)
-		}
-	}
 	if strings.TrimPrefix(filepath.Base(os.Args[0]), "go-") == "at" && len(args) == 1 && args[0] == "--show-config" {
 		showConfig()
 		return

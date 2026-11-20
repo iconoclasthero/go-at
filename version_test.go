@@ -112,15 +112,40 @@ func TestLogTimeFormatSetting(t *testing.T) {
 	if out, _, _ := e.run("", "at", "--log", "fmt"); !regexp.MustCompile(`\[<\d{10}> go-at: job \d+ \(fmt\) started`).MatchString(out) {
 		t.Errorf("custom log format not used in the job log:\n%s", out)
 	}
-	// a bad format is refused up front, from the environment and from the file
-	e.extra = []string{"AT_LOG_TIME_FORMAT=%Q"}
-	if _, se, code := e.run("", "atq"); code == 0 || !strings.Contains(se, "AT_LOG_TIME_FORMAT") {
-		t.Errorf("bad env format accepted: %d %q", code, se)
+	// a bad format never stops anything: commands work, the daemon runs the job,
+	// says so in its log, and stamps with the default
+	for _, how := range []string{"env", "file"} {
+		e2 := &env{t: t, spool: t.TempDir()}
+		bad := "%Q"
+		if how == "env" {
+			e2.extra = []string{"AT_LOG_TIME_FORMAT=" + bad}
+		} else {
+			e2.extra = []string{"AT_CONFIG=" + writeConf(t, "log_time_format = "+bad+"\n")}
+		}
+		if _, se, code := e2.run("", "atq"); code != 0 {
+			t.Errorf("%s: a bad log_time_format must not break go-atq: %d %q", how, code, se)
+		}
+		e2.submit("echo hi\n", "-n", "bad", "now", "+", "1", "second")
+		stop2, log2 := e2.startDaemon()
+		waitFor(t, "job to end with a bad log format ("+how+")", 10*time.Second, func() bool { j, ok := e2.job("bad", true); return ok && j.State == "finished" })
+		stop2()
+		l := log2.String()
+		if !strings.Contains(l, `log_time_format "%Q" is not usable`) || !strings.Contains(l, "using iso") {
+			t.Errorf("%s: no note about the bad format in the daemon log:\n%s", how, l)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(l), "\n") {
+			if !regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d go-atd: `).MatchString(line) {
+				t.Errorf("%s: line not stamped with the default: %q", how, line)
+			}
+		}
+		if out, _, _ := e2.run("", "at", "--log", "bad"); !regexp.MustCompile(`\[\d{4}-\d\d-\d\dT\S+ go-at: job \d+ \(bad\) started`).MatchString(out) {
+			t.Errorf("%s: job log marker not stamped with the default:\n%s", how, out)
+		}
+		if so, _, _ := e2.run("", "at", "--show-config"); !strings.Contains(so, "not usable") {
+			t.Errorf("%s: --show-config does not warn:\n%s", how, so)
+		}
 	}
 	e.extra = nil
-	if _, se, code := e.run("", "at", "--config", writeConf(t, "log_time_format = %Q\n"), "-l"); code == 0 || !strings.Contains(se, "log_time_format") {
-		t.Errorf("bad config format accepted: %d %q", code, se)
-	}
 	out, _, _ := e.run("", "at", "--config", writeConf(t, "log_time_format = iso\n"), "--show-config")
 	if !strings.Contains(out, "log_time_format") {
 		t.Errorf("--show-config lacks the setting:\n%s", out)

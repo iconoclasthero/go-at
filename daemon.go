@@ -88,6 +88,9 @@ func runDaemon(s *Spool) error {
 	defer tick.Stop()
 	// which build is running matters after an upgrade: a daemon keeps its old code until restarted
 	dlog("version %s", strings.TrimPrefix(versionString(), "go-at "))
+	if err := logTimeFormatProblem(); err != nil {
+		dlog("log_time_format %q is not usable (%v); using iso, %s", logTimeFormatSpec(), err, logTimeFormatDefault)
+	}
 	dlog("watching %s", s.Dir)
 	d.sweep()
 	d.prune()
@@ -382,11 +385,11 @@ func logTimeFormatSpec() string {
 	return v
 }
 
-func checkLogTimeFormat(v string) error {
-	if strings.EqualFold(strings.TrimSpace(v), "iso") {
-		return nil
-	}
-	_, err := strftime(time.Now(), v)
+// logTimeFormatProblem is why log_time_format cannot be used, or nil. It is
+// never fatal: a timestamp format is not worth a job that does not run, so a bad
+// one is reported in the daemon's log and the default is used.
+func logTimeFormatProblem() error {
+	_, err := strftime(time.Now(), logTimeFormatSpec())
 	return err
 }
 
@@ -395,7 +398,7 @@ func checkLogTimeFormat(v string) error {
 func stamp() string {
 	s, err := strftime(time.Now(), logTimeFormatSpec())
 	if err != nil {
-		s, _ = strftime(time.Now(), logTimeFormatDefault)
+		s, _ = strftime(time.Now(), logTimeFormatDefault) // see logTimeFormatProblem
 	}
 	return s
 }
