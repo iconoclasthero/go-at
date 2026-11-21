@@ -26,6 +26,13 @@
 #   auto  fzf if installed, else a numbered menu (default)   fzf   menu   off
 #picker = auto
 
+# the timestamp at the start of every daemon log line and job-log marker:
+#   iso   (default)   what "date -Is" prints: 2026-11-20T05:24:26-05:00
+# or % sections, as below (plus %:z = -05:00, %s = epoch seconds, %N, %-d = unpadded):
+#log_time_format = iso     # a bad value is reported in the daemon log and iso is used
+#log_time_format = %F %T %z
+#log_time_format = %s
+
 # how times are shown by go-atq and in messages:
 #   12h   am/pm (default)     Sun Nov 15 11:15:00 PM 2026
 #   24h                       Sun Nov 15 23:15:00 2026

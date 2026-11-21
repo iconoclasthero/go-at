@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,10 @@ func TestStrftime(t *testing.T) {
 		{night, "%F %T %Z %z", "2026-11-15 23:15:00 EST -0500"},
 		{night, "%R | %r", "23:15 | 11:15:00 PM"},
 		{night, "%d/%m/%y day %j", "15/11/26 day 319"},
+		{night, "%FT%T%:z", "2026-11-15T23:15:00-05:00"},
+		{night, "%D %-d/%-m %-I:%M", "11/15/26 15/11 11:15"},
+		{early, "%-H:%-M:%-S", "3:5:9"},
+		{night, "%s", strconv.FormatInt(night.Unix(), 10)},
 		{night, "100%%", "100%"},
 		{night, "no sections", "no sections"},
 	}

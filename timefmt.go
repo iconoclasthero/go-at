@@ -1,6 +1,7 @@
 package main
 
-// How times are shown in listings and messages.
+// How times are shown in listings and messages, and (log_time_format, which
+// uses the same sections) stamped in logs.
 //
 // The setting is "time_format" in the config file (environment: AT_TIME_FORMAT).
 // There is deliberately no command-line flag for it. It is one of:
@@ -15,7 +16,9 @@ package main
 //	%d 05    %e " 5"     %m 11    %y 26         %Y 2026     %j day of year
 //	%H 23    %k "23"     %I 11    %l "11"       %M 15       %S 00
 //	%p AM/PM %P am/pm    %Z EST   %z -0500
-//	%F 2026-11-15        %T 23:15:00   %R 23:15   %r 11:15:00 PM
+//	%F 2026-11-15        %T 23:15:00   %R 23:15   %r 11:15:00 PM   %D 11/15/26
+//	%:z -05:00 (what date -Is prints)    %s seconds since 1970   %N nanoseconds
+//	%-d %-m %-H %-I ... the same without zero or space padding
 //	%% a literal %       %n newline    %t tab
 //
 // %e, %k and %l pad with a space instead of a zero, so columns stay aligned.
@@ -70,6 +73,26 @@ func strftime(t time.Time, spec string) (string, error) {
 		if i >= len(spec) {
 			return "", fmt.Errorf("format ends with a lone %%")
 		}
+		if spec[i] == '-' { // %-d: no padding
+			i++
+			if i >= len(spec) {
+				return "", fmt.Errorf("format ends with a lone %%-")
+			}
+			sec, err := strftime(t, "%"+spec[i:i+1])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(strings.TrimLeft(sec, "0 ") + zeroIfEmpty(sec))
+			continue
+		}
+		if spec[i] == ':' { // %:z, as GNU date
+			if i+1 >= len(spec) || spec[i+1] != 'z' {
+				return "", fmt.Errorf("unknown section %%:%s (only %%:z exists)", spec[i+1:min(i+2, len(spec))])
+			}
+			i++
+			b.WriteString(t.Format("-07:00"))
+			continue
+		}
 		h12 := t.Hour() % 12
 		if h12 == 0 {
 			h12 = 12
@@ -115,6 +138,12 @@ func strftime(t time.Time, spec string) (string, error) {
 			b.WriteString(t.Format("MST"))
 		case 'z':
 			b.WriteString(t.Format("-0700"))
+		case 's':
+			fmt.Fprintf(&b, "%d", t.Unix())
+		case 'N':
+			fmt.Fprintf(&b, "%09d", t.Nanosecond())
+		case 'D':
+			b.WriteString(t.Format("01/02/06"))
 		case 'F':
 			b.WriteString(t.Format("2006-01-02"))
 		case 'T':
@@ -155,4 +184,12 @@ func fmtWhenZone(t time.Time) string {
 		return s
 	}
 	return s + " " + t.Format("MST")
+}
+
+// zeroIfEmpty is "0" for a section that was all padding ("00" with %-M).
+func zeroIfEmpty(sec string) string {
+	if strings.TrimLeft(sec, "0 ") == "" && sec != "" {
+		return "0"
+	}
+	return ""
 }

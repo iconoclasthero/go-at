@@ -79,3 +79,40 @@ download or transfer can repeat side effects. If a job must survive crashes,
 make the script itself idempotent and resumable and have it write a "succeeded"
 marker only after the last step. The commands of an interrupted job are kept in
 `<spool>/history/<id>.sh`.
+
+### Logs and timestamps
+
+Everything the daemon says goes to its stderr (supervisord's `stderr_logfile`,
+the journal under systemd, or `<spool>/atd.log` when it detached itself), one
+line each, starting with a timestamp:
+
+    2026-11-20T00:04:12-05:00 go-atd: version main 6ae6bd7 (...), go1.24.7 linux/amd64, static
+    2026-11-20T00:04:12-05:00 go-atd: watching /home/you/.local/state/at
+    2026-11-22T15:55:00-05:00 go-atd: job 27 (W11-Eagles) started, process group 41207
+    2026-11-22T18:41:09-05:00 go-atd: job 27 (W11-Eagles) finished (exit 0); output in /home/you/.local/state/at/logs/27.log
+
+A job's own log (`go-at --log JOB`, `<spool>/logs/ID.log`) has a stamped marker
+when go-at started it and when it ended, around the job's own output:
+
+    [2026-11-22T15:55:00-05:00 go-at: job 27 (W11-Eagles) started, process group 41207]
+    ...whatever the job printed...
+    [2026-11-22T18:41:09-05:00 go-at: job 27 (W11-Eagles) exited 0 after 2h46m9s]
+
+The default is ISO 8601, exactly what `date -Is` prints: your local time with
+its UTC offset, so it sorts and compares across a daylight-saving change and GNU
+`date -d` can do arithmetic on it (`date -d '2026-11-22T15:55:00-05:00' +%s`).
+It does not follow `time_format`, which is only for how `go-atq` shows times.
+Change it with `log_time_format` (config file or `AT_LOG_TIME_FORMAT`), which
+takes the same `%` sections as `time_format` (see
+[configuration](configuration.md#time-format)), for example:
+
+    log_time_format = %F %T %z         # 2026-11-22 15:55:00 -0500
+    log_time_format = %s               # 1795380900  (epoch seconds)
+    log_time_format = %-m/%-d %I:%M:%S %p   # 11/22 03:55:00 PM, if you must
+
+A format that does not work never stops anything. Every command still runs,
+the daemon still starts and runs your jobs, it says so once in its log
+(`go-atd: log_time_format "%Q" is not usable (...); using iso, ...`) and stamps
+with the default. `go-at --show-config` shows the same warning. The job's own output is not stamped line by line: it
+is written by your commands straight to the log, and go-at does not sit in
+between.

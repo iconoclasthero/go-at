@@ -47,6 +47,7 @@ where it came from.
 | `keep_days` | `AT_KEEP_DAYS` | `30` (records, logs and saved commands of ended jobs) |
 | `keep_commands` | `AT_KEEP_COMMANDS` | `yes` |
 | `time_format` | `AT_TIME_FORMAT` | `12h` (am/pm; `24h`, or a custom format, see below) |
+| `log_time_format` | `AT_LOG_TIME_FORMAT` | `iso` (the timestamp in logs, see [the daemon](daemon.md#logs-and-timestamps)) |
 
 #### Time format
 
@@ -66,7 +67,8 @@ look, or build your own from `%` sections, as in `date(1)`:
 | `%I` 03 | `%l` ` 3` (12h, space-padded) | `%M` 05 | `%S` 09 |
 | `%p` AM/PM | `%P` am/pm | `%Z` EST | `%z` -0500 |
 | `%F` 2026-11-15 | `%T` 23:15:00 | `%R` 23:15 | `%r` 11:15:00 PM |
-| `%%` a `%` | `%n` newline | `%t` tab | |
+| `%:z` -05:00 | `%s` epoch seconds | `%N` nanoseconds | `%D` 11/15/26 |
+| `%-d` `%-m` `%-H` `%-I` `%-M` `%-S`: no padding | `%%` a `%` | `%n` newline | `%t` tab |
 
 An unknown section is an error with the line number. The format only affects
 how times are displayed: `--json` output and the way you type times are

@@ -85,6 +85,8 @@ DAEMON     go-atd [-d]
   -d backgrounds it and does nothing if one is already running, so it is safe
   in a cron watchdog. AT_AUTOSTART=1 makes go-at start it when none is running.
   Runs as the user who starts it and only handles that user's jobs.
+  Every line it logs starts with a timestamp (ISO 8601 like date -Is, see
+  log_time_format); so do the start and exit markers go-at writes into a job's log.
 
 TIME EXAMPLES
   go-at 17:30                          go-at 9:30:15 tomorrow
@@ -114,6 +116,8 @@ CONFIGURATION
   keep_commands  AT_KEEP_COMMANDS yes  (save commands of ended jobs; go-at -c)
   picker         AT_PICKER        auto (auto, fzf, menu or off; see PICKER)
   time_format    AT_TIME_FORMAT   12h  (am/pm; or 24h, or % sections, see below)
+  log_time_format AT_LOG_TIME_FORMAT iso (stamp of every daemon log line and job-log
+                                     marker; iso = what "date -Is" prints, or % sections)
 
   time_format: "12h" (Sun Nov 15 11:15:00 PM 2026), "24h" (Sun Nov 15 23:15:00
   2026) or a format of % sections as in date(1). Config file or environment
@@ -121,6 +125,9 @@ CONFIGURATION
     %a Sun  %A Sunday  %b Nov  %B November  %d 05  %e " 5"  %m 11  %y 26  %Y 2026
     %H 23  %k " 3"  %I 11  %l "11"  %M 15  %S 00  %p AM/PM  %P am/pm  %Z EST
     %z -0500  %F 2026-11-15  %T 23:15:00  %R 23:15  %r 11:15:00 PM  %j yearday  %% %
+    %:z -05:00  %s epoch seconds  %N nanoseconds  %D 11/15/26  %-d %-m %-I... unpadded
+  log_time_format takes the same sections (a bad one is noted in the daemon's log
+  and iso is used; it never stops a job); "iso" is %FT%T%:z, e.g. 2026-11-20T05:24:26-05:00.
 
 ENVIRONMENT
   AT_CONFIG        path of the config file
