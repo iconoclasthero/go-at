@@ -180,6 +180,15 @@ func cmdAt(args []string) {
 	fs.BoolVar(&latest, "latest", false, "")
 	oldQueue := fs.String("q", "", "")
 	fs.Parse(args)
+	// --copy SRC comes first, but options may follow it: --copy 27 -n NAME 9am
+	// (the flag package stops at the first word that is not an option, so
+	// without this "-n NAME" would be read as part of the time)
+	copySrc, copyArgs := "", []string(nil)
+	if copyJob && fs.NArg() > 0 {
+		copySrc = fs.Arg(0)
+		fs.Parse(fs.Args()[1:])
+		copyArgs = []string{copySrc}
+	}
 	latestFlag = latest
 
 	switch {
@@ -257,7 +266,7 @@ func cmdAt(args []string) {
 	}
 
 	sp := openSpool()
-	rest := fs.Args()
+	rest := append(copyArgs, fs.Args()...)
 	var src copySource
 	if copyJob {
 		if len(rest) < 2 {
@@ -670,6 +679,19 @@ func removeJobs(refs []string, kill bool, sigStr string) {
 		got, err := pickJobs(cands, "job", true)
 		if err != nil {
 			fatal(err)
+		}
+		// a choice made in a list is easy to get wrong, and removing cannot be
+		// undone: say what is about to happen and ask (naming jobs does not ask)
+		verb := "remove"
+		if kill {
+			verb = "stop"
+		}
+		fmt.Fprintf(os.Stderr, "about to %s:\n", verb)
+		for _, l := range jobTable(got) {
+			fmt.Fprintf(os.Stderr, "  %s\n", l)
+		}
+		if ans, ok := promptLine(fmt.Sprintf("%s %d job(s)? [y/N]: ", strings.ToUpper(verb[:1])+verb[1:], len(got))); !ok || !strings.EqualFold(ans, "y") {
+			fatal(errCancelled)
 		}
 		for _, j := range got {
 			refs = append(refs, j.ref())

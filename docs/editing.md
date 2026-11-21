@@ -79,5 +79,6 @@ When a command that needs a job gets none (`go-at --show`, `-c`, `--log`,
 terminal, you choose. The `picker` setting says how: `auto` (default: `fzf` if
 it is installed, else a numbered menu), `fzf`, `menu`, or `off`. With fzf the
 right-hand pane previews the job by running `go-at --show`; `go-atrm` can mark
-several (tab). fzf is only ever run as a separate program: nothing of it is in
+several (tab) and then lists what it is about to remove and asks `y/N` (naming
+jobs on the command line never asks). fzf is only ever run as a separate program: nothing of it is in
 go-at. In a script (no terminal) nothing is asked and the command fails.

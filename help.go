@@ -60,7 +60,7 @@ NAMES     --latest
 PICKER    setting picker = auto | fzf | menu | off
   When a command needs a job and none was named, and you are at a terminal:
   fzf if it is installed (with a preview that runs go-at --show), else a
-  numbered menu. go-atrm lets you mark several. "off" never asks. Scripts are
+  numbered menu. go-atrm lets you mark several, then asks y/N. "off" never asks. Scripts are
   never asked anything: the command fails and lists the choices.
 
 LIST      go-at -l | go-atq [-a|--all] [--json]
