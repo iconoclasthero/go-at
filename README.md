@@ -1,4 +1,4 @@
-# go-at
+# go-at 🐐
 
 A from-scratch Go take on `at`: schedule a command to run later. One binary,
 installed under five names that never collide with the system `at`:
